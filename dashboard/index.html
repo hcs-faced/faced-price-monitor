@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Face D — Monitoraggio prezzi</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root { --bg:#f7f6f3; --card:#fff; --ink:#1f1f1f; --mut:#6b6b6b; --line:#e4e1da;
+          --ok:#2e7d4f; --warn:#b26b00; --bad:#b3261e; --acc:#1f3a5f; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--ink); }
+  header { display:flex; align-items:center; gap:16px; padding:12px 20px; background:var(--acc); color:#fff; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  header .sp { flex:1; }
+  header button { background:transparent; color:#fff; border:1px solid #ffffff66; }
+  nav { display:flex; gap:4px; padding:8px 20px; border-bottom:1px solid var(--line); background:#fff; flex-wrap:wrap; }
+  nav button { border:0; background:transparent; padding:8px 12px; border-radius:6px; cursor:pointer; color:var(--mut); }
+  nav button.on { background:var(--bg); color:var(--ink); font-weight:600; }
+  main { padding:20px; max-width:1500px; margin:0 auto; }
+  button { font:inherit; padding:6px 12px; border-radius:6px; border:1px solid var(--line); background:#fff; cursor:pointer; }
+  button.pri { background:var(--acc); color:#fff; border-color:var(--acc); }
+  input, select { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+  .muted { color:var(--mut); }
+  table { border-collapse:collapse; width:100%; }
+  th, td { padding:7px 9px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+  th { font-weight:600; font-size:12px; color:var(--mut); background:#fafaf8; position:sticky; top:0; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .cell { white-space:nowrap; text-align:right; font-variant-numeric:tabular-nums; }
+  .cell small { display:block; }
+  .d-ok { color:var(--ok); } .d-warn { color:var(--warn); } .d-bad { color:var(--bad); font-weight:600; }
+  .bg-bad { background:#fbeceb; } .bg-warn { background:#fdf4e6; }
+  .tag { display:inline-block; font-size:11px; padding:1px 6px; border-radius:10px; border:1px solid var(--line); color:var(--mut); margin-left:4px; }
+  .tag.bad { border-color:#e8b4b0; color:var(--bad); } .tag.ok { border-color:#b5d8c3; color:var(--ok); }
+  .kpis { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
+  .kpi { background:#fff; border:1px solid var(--line); border-radius:10px; padding:12px 16px; min-width:170px; }
+  .kpi b { display:block; font-size:22px; }
+  #login { max-width:360px; margin:80px auto; }
+  #login input { width:100%; margin:6px 0 12px; }
+  .scroll { overflow:auto; max-height:70vh; }
+  a { color:var(--acc); }
+  .err { color:var(--bad); }
+</style>
+</head>
+<body>
+
+<div id="login" class="card" hidden>
+  <h2 style="margin-top:0">Face D — Monitoraggio prezzi</h2>
+  <label>Email<input id="em" type="email" autocomplete="username"></label>
+  <label>Password<input id="pw" type="password" autocomplete="current-password"></label>
+  <button class="pri" id="btnLogin">Accedi</button>
+  <p id="loginErr" class="err"></p>
+</div>
+
+<div id="app" hidden>
+  <header>
+    <h1>Face D — Monitoraggio prezzi</h1><span class="sp"></span>
+    <span id="who" class="muted" style="color:#dfe6ef"></span>
+    <button id="btnOut">Esci</button>
+  </header>
+  <nav id="tabs">
+    <button data-v="matrix" class="on">Matrice prodotto × sito</button>
+    <button data-v="alerts">Tagli oltre 20%</button>
+    <button data-v="amazon">Venditori Amazon</button>
+    <button data-v="urls">Pagine monitorate</button>
+    <button data-v="runs">Raccolte</button>
+  </nav>
+  <main id="view"></main>
+</div>
+
+<script>
+// Configurazione pubblica (la chiave "publishable" è pensata per stare nel browser:
+// i dati sono protetti dal login e dalle regole RLS del database).
+const SUPABASE_URL = "https://ddnsukwzonszpbeyrvwp.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_I4ypCUuggX-Iwpguc4hVmg_aQ4puw-R";
+const THRESHOLD = -20;
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+const $ = (s) => document.querySelector(s);
+const eur = (v) => v == null ? "—" : Number(v).toLocaleString("it-IT", { style: "currency", currency: "EUR" });
+const pct = (v) => v == null ? "" : (v > 0 ? "+" : "") + Number(v).toLocaleString("it-IT", { maximumFractionDigits: 1 }) + "%";
+const dcls = (v) => v == null ? "" : v <= THRESHOLD ? "d-bad" : v < -5 ? "d-warn" : "d-ok";
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const pname = (p) => esc(p.product_name || p.name) + (p.variant ? ` <span class="muted">${esc(p.variant)}</span>` : "");
+let cache = {};
+
+async function load() {
+  const [latest, products, sites, sellers, runs, urls] = await Promise.all([
+    sb.from("v_latest").select("*"),
+    sb.from("products").select("*").eq("active", true).order("id"),
+    sb.from("sites").select("*").order("id"),
+    sb.from("sellers").select("*").order("last_seen", { ascending: false }),
+    sb.from("runs").select("*").order("id", { ascending: false }).limit(20),
+    sb.from("product_urls").select("*").order("id"),
+  ]);
+  for (const r of [latest, products, sites, sellers, runs, urls]) if (r.error) throw r.error;
+  cache = { latest: latest.data, products: products.data, sites: sites.data, sellers: sellers.data, runs: runs.data, urls: urls.data };
+}
+
+function viewMatrix() {
+  const { latest, products, sites } = cache;
+  const byKey = {};
+  for (const o of latest) (byKey[o.product_id + ":" + o.site_id] ||= []).push(o);
+  const alerts = latest.filter((o) => o.deviation_pct != null && o.deviation_pct <= THRESHOLD).length;
+  const unauth = latest.filter((o) => o.authorized === false || o.authorized === null).length;
+  const lastRun = cache.runs[0];
+  let h = `<div class="kpis">
+    <div class="kpi"><span class="muted">Prodotti monitorati</span><b>${products.length}</b></div>
+    <div class="kpi"><span class="muted">Prezzi rilevati</span><b>${latest.length}</b></div>
+    <div class="kpi"><span class="muted">Tagli oltre 20%</span><b class="${alerts ? "d-bad" : ""}">${alerts}</b></div>
+    <div class="kpi"><span class="muted">Offerte da venditori da verificare</span><b>${unauth}</b></div>
+    <div class="kpi"><span class="muted">Ultima raccolta</span><b style="font-size:15px">${lastRun ? new Date(lastRun.started_at).toLocaleString("it-IT") : "—"}</b></div>
+  </div>
+  <div class="card scroll"><table><thead><tr><th>Prodotto</th><th class="num">Prezzo Face D</th>`;
+  for (const s of sites) h += `<th class="num">${esc(s.name)}</th>`;
+  h += `</tr></thead><tbody>`;
+  for (const p of products) {
+    h += `<tr><td>${pname(p)}<br><span class="muted" style="font-size:12px">${p.ean}</span></td><td class="num">${eur(p.rrp)}</td>`;
+    for (const s of sites) {
+      const obs = byKey[p.id + ":" + s.id] || [];
+      if (!obs.length) { h += `<td class="cell muted">—</td>`; continue; }
+      const best = obs.reduce((a, b) => (a.price <= b.price ? a : b));
+      const bg = best.deviation_pct <= THRESHOLD ? "bg-bad" : best.deviation_pct < -5 ? "bg-warn" : "";
+      const extra = obs.length > 1 ? `<small class="muted">${obs.length} venditori</small>` : "";
+      const nauth = obs.filter((o) => o.authorized !== true).length;
+      h += `<td class="cell ${bg}"><a href="${esc(best.url)}" target="_blank" rel="noopener">${eur(best.price)}</a>
+        <small class="${dcls(best.deviation_pct)}">${pct(best.deviation_pct)}${best.possible_bundle ? ' <span class="tag">bundle?</span>' : ""}</small>
+        ${extra}${nauth && s.code === "amazon" ? `<small class="d-bad">${nauth} da verificare</small>` : ""}</td>`;
+    }
+    h += `</tr>`;
+  }
+  h += `</tbody></table></div>
+  <p class="muted">In ogni cella c'è il prezzo più basso rilevato negli ultimi 10 giorni e lo scostamento dal prezzo Face D. Rosso: taglio oltre il 20%. Arancione: tra 5% e 20%.</p>`;
+  return h;
+}
+
+function viewAlerts() {
+  const rows = cache.latest.filter((o) => o.deviation_pct != null && o.deviation_pct <= THRESHOLD)
+    .sort((a, b) => a.deviation_pct - b.deviation_pct);
+  if (!rows.length) return `<div class="card">Nessun taglio oltre il 20% nelle ultime rilevazioni.</div>`;
+  let h = `<div class="card scroll"><table><thead><tr><th>Prodotto</th><th>Sito</th><th>Venditore</th>
+    <th class="num">Prezzo Face D</th><th class="num">Prezzo rilevato</th><th class="num">Scostamento</th><th>Rilevato il</th></tr></thead><tbody>`;
+  for (const o of rows) {
+    h += `<tr><td>${pname(o)}</td><td>${esc(o.site_name)}</td>
+      <td>${esc(o.seller_name || o.seller_id || "—")} ${o.authorized === true ? '<span class="tag ok">autorizzato</span>' : '<span class="tag bad">da verificare</span>'}</td>
+      <td class="num">${eur(o.rrp)}</td><td class="num"><a href="${esc(o.url)}" target="_blank" rel="noopener">${eur(o.price)}</a></td>
+      <td class="num d-bad">${pct(o.deviation_pct)}${o.possible_bundle ? ' <span class="tag">bundle?</span>' : ""}</td>
+      <td>${new Date(o.observed_at).toLocaleDateString("it-IT")}</td></tr>`;
+  }
+  return h + `</tbody></table></div>`;
+}
+
+function viewAmazon() {
+  const amazon = cache.sites.find((s) => s.code === "amazon");
+  const sellers = cache.sellers.filter((s) => amazon && s.site_id === amazon.id);
+  const offers = cache.latest.filter((o) => amazon && o.site_id === amazon.id);
+  let h = `<div class="card"><p class="muted" style="margin-top:0">Amazon fornisce solo il codice del venditore. Apri la vetrina per vedere il nome, poi indica se è autorizzato.</p>
+  <table><thead><tr><th>Venditore</th><th>Nome</th><th class="num">Offerte attive</th><th>Prima volta</th><th>Ultima volta</th><th>Stato</th></tr></thead><tbody>`;
+  for (const s of sellers) {
+    const n = offers.filter((o) => o.seller_id === s.seller_id).length;
+    h += `<tr><td><a href="https://www.amazon.it/sp?seller=${encodeURIComponent(s.seller_id)}" target="_blank" rel="noopener">${esc(s.seller_id)}</a></td>
+      <td><input value="${esc(s.name || "")}" data-seller-name="${s.id}" placeholder="nome venditore" style="width:180px"></td>
+      <td class="num">${n}</td><td>${new Date(s.first_seen).toLocaleDateString("it-IT")}</td><td>${new Date(s.last_seen).toLocaleDateString("it-IT")}</td>
+      <td><select data-seller-auth="${s.id}">
+        <option value="" ${s.authorized == null ? "selected" : ""}>Da verificare</option>
+        <option value="true" ${s.authorized === true ? "selected" : ""}>Autorizzato</option>
+        <option value="false" ${s.authorized === false ? "selected" : ""}>Non autorizzato</option></select></td></tr>`;
+  }
+  return h + `</tbody></table></div>`;
+}
+
+function viewUrls() {
+  const { urls, products, sites } = cache;
+  const pmap = Object.fromEntries(products.map((p) => [p.id, p]));
+  const smap = Object.fromEntries(sites.map((s) => [s.id, s]));
+  let h = `<div class="card"><b>Aggiungi una pagina prodotto da monitorare</b><br><br>
+    <select id="nuP">${products.map((p) => `<option value="${p.id}">${esc(p.name)}${p.variant ? " – " + esc(p.variant) : ""}</option>`).join("")}</select>
+    <select id="nuS">${sites.filter((s) => s.kind !== "amazon").map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("")}</select>
+    <input id="nuU" placeholder="https://..." style="width:380px">
+    <button class="pri" id="btnAddUrl">Aggiungi</button> <span id="nuMsg"></span>
+    <p class="muted">Amazon non serve: i prezzi arrivano in automatico dalle API ufficiali.</p></div>
+    <div class="card scroll"><table><thead><tr><th>Prodotto</th><th>Sito</th><th>Pagina</th><th>Attiva</th></tr></thead><tbody>`;
+  for (const u of urls) {
+    const p = pmap[u.product_id] || {};
+    h += `<tr><td>${pname(p)}</td><td>${esc(smap[u.site_id]?.name)}</td>
+      <td><a href="${esc(u.url)}" target="_blank" rel="noopener">${esc(u.url)}</a></td>
+      <td><input type="checkbox" data-url-active="${u.id}" ${u.active ? "checked" : ""}></td></tr>`;
+  }
+  return h + `</tbody></table></div>`;
+}
+
+function viewRuns() {
+  let h = `<div class="card scroll"><table><thead><tr><th>#</th><th>Inizio</th><th>Esito</th><th class="num">Prezzi trovati</th><th class="num">Errori</th><th>Note</th></tr></thead><tbody>`;
+  for (const r of cache.runs) {
+    const s = r.summary || {};
+    h += `<tr><td>${r.id}</td><td>${new Date(r.started_at).toLocaleString("it-IT")}</td><td>${esc(r.status)}</td>
+      <td class="num">${s.prices_found ?? ""}</td><td class="num">${s.errors ?? ""}</td>
+      <td><details><summary class="muted">dettagli</summary><pre style="white-space:pre-wrap;font-size:12px">${esc((s.log || []).join("\n"))}</pre></details></td></tr>`;
+  }
+  return h + `</tbody></table></div>`;
+}
+
+const views = { matrix: viewMatrix, alerts: viewAlerts, amazon: viewAmazon, urls: viewUrls, runs: viewRuns };
+let current = "matrix";
+
+async function render() {
+  $("#view").innerHTML = `<p class="muted">Caricamento…</p>`;
+  try { await load(); $("#view").innerHTML = views[current](); }
+  catch (e) { $("#view").innerHTML = `<p class="err">Errore: ${esc(e.message || e)}</p>`; }
+}
+
+document.addEventListener("change", async (ev) => {
+  const t = ev.target;
+  if (t.dataset.sellerAuth) {
+    const v = t.value === "" ? null : t.value === "true";
+    await sb.from("sellers").update({ authorized: v }).eq("id", t.dataset.sellerAuth);
+  } else if (t.dataset.sellerName) {
+    await sb.from("sellers").update({ name: t.value || null }).eq("id", t.dataset.sellerName);
+  } else if (t.dataset.urlActive) {
+    await sb.from("product_urls").update({ active: t.checked }).eq("id", t.dataset.urlActive);
+  }
+});
+
+document.addEventListener("click", async (ev) => {
+  const t = ev.target;
+  if (t.matches("#tabs button")) {
+    document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b === t));
+    current = t.dataset.v; render();
+  } else if (t.id === "btnAddUrl") {
+    const url = $("#nuU").value.trim();
+    if (!/^https?:\/\//.test(url)) { $("#nuMsg").textContent = "Inserisci un indirizzo che inizi con https://"; return; }
+    const { error } = await sb.from("product_urls").insert({ product_id: +$("#nuP").value, site_id: +$("#nuS").value, url });
+    $("#nuMsg").textContent = error ? "Errore: " + error.message : "Aggiunta. Sarà letta alla prossima raccolta.";
+    if (!error) render();
+  } else if (t.id === "btnLogin") {
+    $("#loginErr").textContent = "";
+    const { error } = await sb.auth.signInWithPassword({ email: $("#em").value.trim(), password: $("#pw").value });
+    if (error) $("#loginErr").textContent = "Accesso non riuscito: controlla email e password.";
+  } else if (t.id === "btnOut") {
+    await sb.auth.signOut();
+  }
+});
+
+sb.auth.onAuthStateChange((_e, session) => {
+  $("#login").hidden = !!session; $("#app").hidden = !session;
+  if (session) { $("#who").textContent = session.user.email; render(); }
+});
+</script>
+</body>
+</html>
