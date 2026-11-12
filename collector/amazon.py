@@ -5,6 +5,7 @@
   (prezzo, spedizione, FBA, Buy Box). Restituisce fino a 20 offerte.
 """
 import os
+import re
 import time
 import requests
 
@@ -131,3 +132,65 @@ def collect(products: list[dict], amazon_site_id: int, run_id: int, log: list) -
             upsert_on="site_id,seller_id",
         )
     return rows
+
+
+# ---------- Bundle e altre inserzioni Face D su Amazon ----------
+BUNDLE_WORDS = re.compile(r"\b(kit|set|cofanetto|confezione|bundle|pacco|pack|duo|trio|\d\s?x|x\s?\d|\d\s?pz|\d\s?pezzi)\b|\+", re.I)
+
+
+def discover_listings(known_asins: set, amazon_site_id: int, log: list, max_pages: int = 10) -> int:
+    """Cerca nel catalogo Amazon.it le inserzioni Face D con ASIN diverso dai nostri prodotti:
+    bundle creati da venditori terzi (kit, confezioni multiple, abbinamenti) o altre inserzioni."""
+    found = []
+    token = None
+    for _ in range(max_pages):
+        params = {"keywords": "Face D", "marketplaceIds": MARKETPLACE_IT, "includedData": "summaries", "pageSize": 20}
+        if token:
+            params["pageToken"] = token
+        try:
+            data = _get("/catalog/2022-04-01/items", params, min_interval=0.6)
+        except Exception as e:  # noqa: BLE001
+            log.append(f"Amazon ricerca inserzioni: {e}")
+            break
+        for it in data.get("items") or []:
+            asin = it.get("asin")
+            summ = (it.get("summaries") or [{}])[0]
+            brand = (summ.get("brand") or summ.get("brandName") or "").lower().replace(" ", "")
+            title = summ.get("itemName") or ""
+            if not asin or asin in known_asins or brand not in ("faced", "face-d"):
+                continue
+            found.append({"site_id": amazon_site_id, "url": f"https://www.amazon.it/dp/{asin}",
+                          "title": title[:300] or None,
+                          "kind": "bundle" if BUNDLE_WORDS.search(title) else "altra inserzione"})
+        token = (data.get("pagination") or {}).get("nextToken")
+        if not token:
+            break
+    if found:
+        db.insert("bundles", found, upsert_on="url")
+    return len(found)
+
+
+def collect_bundles(amazon_site_id: int, run_id: int, log: list) -> int:
+    """Prezzo più basso e numero di offerte per ogni inserzione Amazon registrata come bundle."""
+    items = db.select("bundles", f"select=*&active=eq.true&site_id=eq.{amazon_site_id}")
+    prices, read = [], 0
+    for b in items:
+        asin = b["url"].rstrip("/").split("/")[-1]
+        try:
+            data = _get(f"/products/pricing/v0/items/{asin}/offers",
+                        {"MarketplaceId": MARKETPLACE_IT, "ItemCondition": "New"}, min_interval=2.1)
+        except Exception as e:  # noqa: BLE001
+            log.append(f"Amazon inserzione {asin}: {e}"[:300])
+            continue
+        offers = (data.get("payload") or {}).get("Offers") or []
+        listed = [_amount(o.get("ListingPrice")) for o in offers]
+        listed = [p for p in listed if p is not None]
+        values = {"last_seen": db.now_iso(), "in_stock": bool(listed),
+                  "price": min(listed) if listed else None, "sellers": len(offers)}
+        db.update("bundles", f"id=eq.{b['id']}", values)
+        if listed:
+            prices.append({"bundle_id": b["id"], "run_id": run_id, "price": min(listed)})
+        read += 1
+    if prices:
+        db.insert("bundle_prices", prices)
+    return read
