@@ -55,9 +55,9 @@ def main() -> int:
 
     summary["log"] = log[-200:]
     db.update("runs", f"id=eq.{run_id}", {"status": status, "finished_at": db.now_iso(), "summary": summary})
+    # Il repository è pubblico: nei log di GitHub solo i totali.
+    # Il dettaglio (prezzi, venditori, errori) resta nel database, visibile solo con login.
     print(f"Run {run_id}: {status}")
-    for line in log:
-        print(" -", line)
     print({k: v for k, v in summary.items() if k != "log"})
     return 1 if status == "error" else 0
 
