@@ -29,7 +29,7 @@ def main() -> int:
 
         urls = db.select(
             "product_urls",
-            "select=*,products!inner(active,in_prototype)&active=eq.true"
+            "select=*,products!inner(active,in_prototype,ean,variant)&active=eq.true"
             "&products.active=eq.true&products.in_prototype=eq.true",
         )
         rows = retailers.collect(urls, run_id, log)
