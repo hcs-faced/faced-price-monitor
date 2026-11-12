@@ -138,17 +138,18 @@ async function fetchAll(table, build = (q) => q) {
 }
 
 async function load() {
-  const [latest, products, sites, sellers, urls, runs] = await Promise.all([
+  const [latest, products, sites, sellers, urls, runs, bundles] = await Promise.all([
     fetchAll("v_latest"),
     fetchAll("products", (q) => q.eq("active", true).order("name")),
     fetchAll("sites", (q) => q.order("id")),
     fetchAll("sellers"),
     fetchAll("product_urls", (q) => q.order("id")),
     sb.from("runs").select("*").order("id", { ascending: false }).limit(30).then((r) => { if (r.error) throw r.error; return r.data; }),
+    fetchAll("bundles", (q) => q.eq("active", true).order("site_id")).catch(() => []),
   ]);
   // solo i prodotti attivi (i prodotti esclusi spariscono anche da rivenditori e analisi)
   const active = new Set(products.map((p) => p.id));
-  cache = { latest: latest.filter((o) => active.has(o.product_id)), products, sites, sellers, urls, runs,
+  cache = { latest: latest.filter((o) => active.has(o.product_id)), products, sites, sellers, urls, runs, bundles,
     pmap: Object.fromEntries(products.map((p) => [p.id, p])),
     smap: Object.fromEntries(sites.map((s) => [s.id, s])) };
 }
@@ -396,16 +397,32 @@ async function renderResellerCharts(r, rows) {
 }
 
 function viewPromos() {
-  // Bundle: pagine dei rivenditori con kit, confezioni multiple o prodotti abbinati.
-  // I nostri kit (es. kit di Natale) sono prodotti Face D a catalogo, quindi non sono bundle.
+  const { bundles, smap } = cache;
+  // Pagine prodotto (con EAN Face D) che dal titolo sembrano kit o confezioni multiple.
+  // I nostri kit a catalogo (es. kit di Natale) non sono bundle.
   const ownKit = (o) => /kit|box|cofanett|tree|xmas|natale/i.test(o.product_name || "");
-  const bundles = cache.latest.filter((o) => o.possible_bundle && !ownKit(o));
-  let h = `<h2>Bundle</h2><p class="desc">Le pagine in cui un rivenditore vende prodotti Face D in kit, in confezioni multiple o abbinati ad altri prodotti (anche di altri marchi). I kit Face D a catalogo, come i kit di Natale, non sono considerati bundle.</p>
-  <div class="card">`;
-  if (!bundles.length) return h + `<p class="hint">Nessun bundle rilevato nelle ultime raccolte.</p></div>`;
-  h += `<table><thead><tr><th>Prodotto</th><th>Dove</th><th>Titolo della pagina</th><th class="num">Prezzo</th><th class="num">Prezzo Face D</th></tr></thead><tbody>`;
-  for (const o of bundles) h += `<tr><td>${pname(o)}</td><td>${esc(o.site_code === "amazon" ? (o.seller_name || o.seller_id) : o.site_name)}</td><td>${esc(o.title || "")}</td><td class="num"><a href="${esc(o.url)}" target="_blank" rel="noopener">${eur(o.price)}</a></td><td class="num">${eur(o.rrp)}</td></tr>`;
-  return h + `</tbody></table></div>`;
+  const flagged = cache.latest.filter((o) => o.possible_bundle && !ownKit(o));
+  const name = (b) => smap[b.site_id]?.name || "";
+  const days = (d) => d ? Math.max(0, Math.round((Date.now() - new Date(d)) / 864e5)) : null;
+  let h = `<h2>Bundle</h2><p class="desc">I kit creati dai rivenditori: pagine che vendono prodotti Face D abbinati tra loro o con altri prodotti, oppure in confezioni multiple, con un codice diverso dai nostri prodotti. Su Amazon sono le inserzioni Face D create da venditori terzi con un ASIN diverso dai nostri (in «Tipo» trovi «bundle» o «altra inserzione» quando il titolo non sembra un kit). I bundle virtuali di faced.com non sono inclusi. «Online da» indica da quanti giorni il bundle è stato visto per la prima volta. Nella colonna «Contenuto» potete annotare i prodotti Face D inclusi.</p>`;
+  h += `<div class="card scroll" style="padding:0"><table><thead><tr><th>Rivenditore</th><th>Tipo</th><th>Bundle</th><th class="num">Prezzo</th><th class="num">Barrato</th><th class="num">Venditori</th><th>Disponibile</th><th class="num">Online da</th><th>Contenuto</th></tr></thead><tbody>`;
+  if (!bundles.length) h += `<tr><td colspan="9" class="hint">I bundle vengono cercati alla prossima raccolta (BENU e Amazon; Atida, Pinalli e Sephora quando sarà attivo il PC dell'ufficio).</td></tr>`;
+  for (const b of [...bundles].sort((x, y) => name(x).localeCompare(name(y)) || (x.title || "").localeCompare(y.title || ""))) {
+    const d = days(b.first_seen);
+    h += `<tr><td>${esc(name(b))}</td><td>${esc(b.kind || "bundle")}</td>
+      <td style="max-width:420px"><a href="${esc(b.url)}" target="_blank" rel="noopener">${esc(b.title || b.url.replace(/^https?:\/\/[^/]+\//, ""))}</a></td>
+      <td class="num">${eur(b.price)}</td><td class="num">${b.list_price ? eur(b.list_price) : "—"}</td><td class="num">${b.sellers ?? "—"}</td>
+      <td>${b.in_stock === true ? "sì" : b.in_stock === false ? '<span class="muted">no</span>' : "—"}</td>
+      <td class="num">${d == null ? "—" : d + " gg"}</td>
+      <td><input value="${esc(b.components || "")}" data-bundle-comp="${b.id}" placeholder="es. Pure Lift + Instant Rich" style="width:220px"></td></tr>`;
+  }
+  h += `</tbody></table></div>`;
+  if (flagged.length) {
+    h += `<div class="card"><h3>Pagine prodotto che sembrano confezioni multiple (${flagged.length})</h3><table><thead><tr><th>Prodotto</th><th>Dove</th><th>Titolo della pagina</th><th class="num">Prezzo</th><th class="num">Prezzo Face D</th></tr></thead><tbody>`;
+    for (const o of flagged) h += `<tr><td>${pname(o)}</td><td>${esc(o.site_code === "amazon" ? (o.seller_name || o.seller_id) : o.site_name)}</td><td>${esc(o.title || "")}</td><td class="num"><a href="${esc(o.url)}" target="_blank" rel="noopener">${eur(o.price)}</a></td><td class="num">${eur(o.rrp)}</td></tr>`;
+    h += `</tbody></table></div>`;
+  }
+  return h;
 }
 
 function viewCoverage() {
@@ -525,6 +542,9 @@ document.addEventListener("change", async (ev) => {
   } else if (t.dataset.sellerName) {
     const { error } = await sb.from("sellers").update({ name: t.value || null }).eq("id", t.dataset.sellerName);
     if (error) alert("Non salvato: " + error.message); else { const s = cache.sellers.find((x) => x.id == t.dataset.sellerName); if (s) s.name = t.value || null; }
+  } else if (t.dataset.bundleComp) {
+    const { error } = await sb.from("bundles").update({ components: t.value || null }).eq("id", t.dataset.bundleComp);
+    t.style.borderColor = error ? "var(--bad)" : "var(--ok)";
   } else if (t.dataset.urlActive) {
     await sb.from("product_urls").update({ active: t.checked }).eq("id", t.dataset.urlActive);
   } else if (t.dataset.rrp) {
