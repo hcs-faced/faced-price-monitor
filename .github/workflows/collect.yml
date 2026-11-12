@@ -33,4 +33,7 @@ jobs:
           SPAPI_CLIENT_ID: ${{ secrets.SPAPI_CLIENT_ID }}
           SPAPI_CLIENT_SECRET: ${{ secrets.SPAPI_CLIENT_SECRET }}
           SPAPI_REFRESH_TOKEN: ${{ secrets.SPAPI_REFRESH_TOKEN }}
+          # Questi siti bloccano i server di GitHub: li legge il PC dell'ufficio
+          # (repository privato hcs-faced/faced-price-collector-local)
+          EXCLUDE_SITES: atida,pinalli,sephora
         run: python main.py
