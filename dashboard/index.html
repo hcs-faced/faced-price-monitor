@@ -4,6 +4,594 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Face D — Monitoraggio prezzi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  /* Stile ispirato a faced.com: bianco e nero, Courier per il testo, Oswald per i titoli, angoli vivi */
+  :root { --ink:#000; --mut:#6f6f6f; --line:#000; --soft:#e6e6e6; --bg:#fff; --tint:#f5f5f5;
+          --bad:#e22828; --warn:#b8860b; --ok:#2f6b4f; --blue:#4b6a78; --peach:#f0ccb2;
+          --mono:"Courier New", Courier, monospace; --head:"Oswald", "Arial Narrow", sans-serif; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 var(--mono); background:var(--bg); color:var(--ink); }
+  h1,h2,h3,.head { font-family:var(--head); font-weight:500; letter-spacing:.02em; text-transform:uppercase; margin:0; }
+  h2 { font-size:22px; margin:0 0 4px; } h3 { font-size:16px; margin:0 0 10px; }
+  .bar { background:#000; color:#fff; text-align:center; font-size:12px; letter-spacing:.12em; text-transform:uppercase; padding:6px; }
+  header { display:flex; align-items:center; gap:20px; padding:18px 28px; border-bottom:1px solid var(--line); }
+  .logo { font-family:var(--head); font-size:28px; font-weight:600; letter-spacing:.04em; }
+  .logo small { font-family:var(--mono); font-size:12px; font-weight:400; letter-spacing:.1em; margin-left:10px; text-transform:uppercase; }
+  header .sp { flex:1; }
+  nav { display:flex; gap:0; padding:0 28px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  nav button { border:0; border-bottom:3px solid transparent; background:transparent; padding:12px 14px 9px; cursor:pointer;
+               font-family:var(--head); font-size:14px; letter-spacing:.06em; text-transform:uppercase; color:var(--mut); }
+  nav button.on { color:#000; border-bottom-color:#000; }
+  main { padding:24px 28px 60px; max-width:1600px; margin:0 auto; }
+  button, .btn { font:13px var(--mono); padding:8px 16px; border:1px solid #000; background:#fff; color:#000; cursor:pointer;
+           text-transform:uppercase; letter-spacing:.08em; border-radius:0; }
+  button.pri { background:#000; color:#fff; }
+  button:hover { opacity:.8; }
+  input, select { font:13px var(--mono); padding:7px 9px; border:1px solid #000; border-radius:0; background:#fff; }
+  label.f { display:flex; flex-direction:column; gap:4px; font-size:12px; text-transform:uppercase; letter-spacing:.06em; }
+  .card { border:1px solid var(--line); padding:18px; margin-bottom:20px; background:#fff; }
+  .grid { display:grid; gap:20px; grid-template-columns:repeat(auto-fit, minmax(420px, 1fr)); }
+  .muted { color:var(--mut); }
+  table { border-collapse:collapse; width:100%; }
+  th, td { padding:7px 9px; border-bottom:1px solid var(--soft); text-align:left; vertical-align:top; }
+  th { font-family:var(--head); font-weight:500; font-size:12px; letter-spacing:.06em; text-transform:uppercase;
+       background:#fff; position:sticky; top:0; z-index:2; border-bottom:1px solid #000; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .cell { white-space:nowrap; text-align:right; }
+  .cell small { display:block; font-size:11px; }
+  .sticky { position:sticky; left:0; background:#fff; z-index:1; min-width:260px; }
+  th.sticky { z-index:3; }
+  .d-ok { color:var(--ok); } .d-warn { color:var(--warn); } .d-bad { color:var(--bad); font-weight:700; }
+  .bg-bad { background:#fdeaea; } .bg-warn { background:#fbf3e0; }
+  .tag { display:inline-block; font-size:10px; padding:1px 6px; border:1px solid #000; text-transform:uppercase; letter-spacing:.06em; margin-left:4px; white-space:nowrap; }
+  .tag.bad { border-color:var(--bad); color:var(--bad); } .tag.ok { border-color:var(--ok); color:var(--ok); }
+  .tag.lim { background:#000; color:#fff; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); border:1px solid #000; margin-bottom:24px; }
+  .kpi { padding:14px 16px; border-right:1px solid var(--soft); }
+  .kpi:last-child { border-right:0; }
+  .kpi span { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--mut); }
+  .kpi b { display:block; font-family:var(--head); font-weight:500; font-size:30px; line-height:1.2; }
+  .scroll { overflow:auto; max-height:72vh; }
+  a { color:#000; }
+  .err { color:var(--bad); }
+  .row { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+  .hbar { height:10px; background:#000; display:inline-block; vertical-align:middle; }
+  .hbar.neg { background:var(--bad); }
+  .clickable { cursor:pointer; } .clickable:hover td { background:var(--tint); }
+  .charts { display:grid; gap:16px; grid-template-columns:repeat(auto-fill, minmax(360px,1fr)); }
+  .chart { border:1px solid var(--soft); padding:12px; }
+  .chart .t { font-size:12px; margin-bottom:6px; min-height:34px; }
+  .legend { font-size:11px; color:var(--mut); }
+  .legend i { display:inline-block; width:18px; height:0; border-top:2px solid #000; vertical-align:middle; margin:0 4px 0 10px; }
+  .legend i.rrp { border-top:1px dashed #000; } .legend i.thr { border-top:1px dotted var(--bad); }
+  #login { max-width:380px; margin:90px auto; }
+  #login input { width:100%; margin:6px 0 14px; }
+  .back { margin-bottom:16px; }
+  .hint { font-size:12px; color:var(--mut); }
+</style>
+</head>
+<body>
+
+<div id="login" class="card" hidden>
+  <div class="logo" style="margin-bottom:6px">FACE D</div>
+  <p class="muted" style="margin-top:0">Monitoraggio prezzi — area riservata</p>
+  <label class="f">Email<input id="em" type="email" autocomplete="username"></label>
+  <label class="f">Password<input id="pw" type="password" autocomplete="current-password"></label>
+  <button class="pri" id="btnLogin" style="width:100%">Accedi</button>
+  <p id="loginErr" class="err"></p>
+</div>
+
+<div id="app" hidden>
+  <div class="bar">Monitoraggio prezzi online · uso interno</div>
+  <header>
+    <div class="logo">FACE D<small>Price monitor</small></div><span class="sp"></span>
+    <span id="who" class="muted"></span>
+    <button id="btnOut">Esci</button>
+  </header>
+  <nav id="tabs">
+    <button data-v="overview" class="on">Panoramica</button>
+    <button data-v="matrix">Matrice prodotti × siti</button>
+    <button data-v="alerts">Tagli oltre 20%</button>
+    <button data-v="resellers">Rivenditori</button>
+    <button data-v="promos">Promozioni e bundle</button>
+    <button data-v="coverage">Copertura</button>
+    <button data-v="manage">Gestione prodotti</button>
+    <button data-v="urls">Pagine monitorate</button>
+    <button data-v="runs">Raccolte</button>
+  </nav>
+  <main id="view"></main>
+</div>
+
+<script>
+// Configurazione pubblica: la chiave "publishable" è fatta per stare nel browser.
+// I dati sono protetti dal login e dalle regole RLS del database.
+const SUPABASE_URL = "https://ddnsukwzonszpbeyrvwp.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_I4ypCUuggX-Iwpguc4hVmg_aQ4puw-R";
+const THRESHOLD = -20;
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+const $ = (s) => document.querySelector(s);
+const eur = (v) => v == null ? "—" : Number(v).toLocaleString("it-IT", { style: "currency", currency: "EUR" });
+const pct = (v) => v == null ? "" : (v > 0 ? "+" : "") + Number(v).toLocaleString("it-IT", { maximumFractionDigits: 1 }) + "%";
+const dcls = (v) => v == null ? "" : v <= THRESHOLD ? "d-bad" : v < -5 ? "d-warn" : "d-ok";
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const pname = (p) => esc(p.product_name || p.name) + (p.variant ? ` <span class="muted">· ${esc(p.variant)}</span>` : "");
+const dt = (d) => d ? new Date(d).toLocaleDateString("it-IT") : "—";
+const avg = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+let cache = {};
+let state = { view: "overview", reseller: null, q: "", onlyFound: true, onlyAlerts: false };
+
+// Legge tutte le righe (Supabase restituisce al massimo 1000 righe per richiesta)
+async function fetchAll(table, build = (q) => q) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await build(sb.from(table).select("*")).range(from, from + 999);
+    if (error) throw error;
+    out.push(...data);
+    if (data.length < 1000) return out;
+  }
+}
+
+async function load() {
+  const [latest, products, sites, sellers, urls, runs] = await Promise.all([
+    fetchAll("v_latest"),
+    fetchAll("products", (q) => q.eq("active", true).order("name")),
+    fetchAll("sites", (q) => q.order("id")),
+    fetchAll("sellers"),
+    fetchAll("product_urls", (q) => q.order("id")),
+    sb.from("runs").select("*").order("id", { ascending: false }).limit(30).then((r) => { if (r.error) throw r.error; return r.data; }),
+  ]);
+  cache = { latest, products, sites, sellers, urls, runs,
+    pmap: Object.fromEntries(products.map((p) => [p.id, p])),
+    smap: Object.fromEntries(sites.map((s) => [s.id, s])) };
+}
+async function loadWeekly() {
+  if (!cache.weekly) cache.weekly = await fetchAll("v_weekly", (q) => q.order("week"));
+  return cache.weekly;
+}
+
+// ---------- Rivenditori: un sito, oppure un singolo venditore su Amazon ----------
+function resellerKey(o) { return o.site_id + "|" + (o.seller_id || ""); }
+function resellers() {
+  const { latest, sites, sellers, smap } = cache;
+  const map = {};
+  for (const s of sites) if (s.kind !== "amazon") map[s.id + "|"] = { key: s.id + "|", site: s, name: s.name, authorized: s.authorized, kind: "Sito", rows: [] };
+  for (const s of sellers) {
+    const site = smap[s.site_id];
+    map[s.site_id + "|" + s.seller_id] = { key: s.site_id + "|" + s.seller_id, site, seller: s, name: s.name || s.seller_id,
+      authorized: s.authorized, kind: "Venditore " + (site?.name || ""), rows: [] };
+  }
+  for (const o of latest) {
+    const k = resellerKey(o);
+    (map[k] ||= { key: k, site: smap[o.site_id], name: o.seller_name || o.seller_id || smap[o.site_id]?.name, authorized: o.authorized, kind: "Venditore", rows: [] }).rows.push(o);
+  }
+  return Object.values(map);
+}
+function authTag(a) {
+  return a === true ? '<span class="tag ok">autorizzato</span>' : a === false ? '<span class="tag bad">non autorizzato</span>' : '<span class="tag bad">da verificare</span>';
+}
+
+// ---------- Grafico a linee (SVG, senza librerie) ----------
+function lineChart(points, rrp, w = 340, h = 150) {
+  // points: [{week:'2026-11-09', price: 12.3}]
+  const end = new Date(); const start = new Date(end.getTime() - 365 * 864e5);
+  const pad = { l: 42, r: 8, t: 8, b: 20 };
+  const vals = points.map((p) => +p.price).concat(rrp ? [rrp, rrp * 0.8] : []);
+  if (!vals.length) return `<p class="hint">Nessun dato</p>`;
+  let lo = Math.min(...vals) * 0.9, hi = Math.max(...vals) * 1.05;
+  if (hi - lo < 1) { hi += 1; lo = Math.max(0, lo - 1); }
+  const X = (d) => pad.l + (w - pad.l - pad.r) * Math.min(1, Math.max(0, (new Date(d) - start) / (end - start)));
+  const Y = (v) => pad.t + (h - pad.t - pad.b) * (1 - (v - lo) / (hi - lo));
+  let s = `<svg viewBox="0 0 ${w} ${h}" width="100%" style="display:block;font-family:var(--mono)">`;
+  for (let i = 0; i <= 3; i++) { const v = lo + (hi - lo) * i / 3; s += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${Y(v)}" y2="${Y(v)}" stroke="#eee"/><text x="${pad.l - 4}" y="${Y(v) + 3}" font-size="9" text-anchor="end" fill="#6f6f6f">${v.toFixed(0)}€</text>`; }
+  for (let m = 0; m <= 12; m += 3) { const d = new Date(start.getFullYear(), start.getMonth() + m + 1, 1); if (d > end) break; s += `<text x="${X(d)}" y="${h - 5}" font-size="9" text-anchor="middle" fill="#6f6f6f">${d.toLocaleDateString("it-IT", { month: "short", year: "2-digit" })}</text>`; }
+  if (rrp) {
+    s += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${Y(rrp)}" y2="${Y(rrp)}" stroke="#000" stroke-dasharray="4 3"/>`;
+    s += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${Y(rrp * 0.8)}" y2="${Y(rrp * 0.8)}" stroke="#e22828" stroke-dasharray="1 3"/>`;
+  }
+  const pts = points.map((p) => [X(p.week), Y(+p.price), p]);
+  if (pts.length > 1) s += `<polyline fill="none" stroke="#000" stroke-width="2" points="${pts.map((p) => p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ")}"/>`;
+  for (const [x, y, p] of pts) {
+    const bad = rrp && p.price <= rrp * 0.8;
+    s += `<circle cx="${x}" cy="${y}" r="3" fill="${bad ? "#e22828" : "#000"}"><title>Settimana del ${dt(p.week)}: ${eur(p.price)}${rrp ? " (" + pct((p.price - rrp) / rrp * 100) + ")" : ""}</title></circle>`;
+  }
+  return s + `</svg>`;
+}
+const legend = `<div class="legend"><i></i>prezzo minimo della settimana<i class="rrp"></i>prezzo Face D<i class="thr"></i>soglia −20%</div>`;
+
+// ---------- Viste ----------
+function viewOverview() {
+  const { latest, products, runs } = cache;
+  const found = new Set(latest.map((o) => o.product_id));
+  const alerts = latest.filter((o) => o.deviation_pct != null && o.deviation_pct <= THRESHOLD);
+  const rs = resellers().filter((r) => r.rows.length);
+  const unverified = rs.filter((r) => r.authorized !== true);
+  const lastRun = runs[0];
+  let h = `<h2>Panoramica</h2><p class="muted" style="margin-top:0">Ultimi prezzi rilevati (ultimi 10 giorni) confrontati con il prezzo di faced.com.</p>
+  <div class="kpis">
+    <div class="kpi"><span>Prodotti a catalogo</span><b>${products.length}</b></div>
+    <div class="kpi"><span>Trovati online</span><b>${found.size}</b></div>
+    <div class="kpi"><span>Rivenditori attivi</span><b>${rs.length}</b></div>
+    <div class="kpi"><span>Tagli oltre 20%</span><b class="${alerts.length ? "d-bad" : ""}">${alerts.length}</b></div>
+    <div class="kpi"><span>Rivenditori da verificare</span><b class="${unverified.length ? "d-bad" : ""}">${unverified.length}</b></div>
+    <div class="kpi"><span>Ultima raccolta</span><b style="font-size:18px">${lastRun ? new Date(lastRun.started_at).toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" }) : "—"}</b></div>
+  </div><div class="grid">`;
+
+  // Indice prezzi per rivenditore
+  const idx = rs.map((r) => {
+    const d = r.rows.map((o) => o.deviation_pct).filter((v) => v != null);
+    return { r, avg: avg(d), n: new Set(r.rows.map((o) => o.product_id)).size, bad: d.filter((v) => v <= THRESHOLD).length };
+  }).sort((a, b) => (a.avg ?? 0) - (b.avg ?? 0));
+  h += `<div class="card"><h3>Sconto medio per rivenditore</h3><table><thead><tr><th>Rivenditore</th><th class="num">Prodotti</th><th class="num">Sotto −20%</th><th>Scostamento medio</th></tr></thead><tbody>`;
+  for (const x of idx) {
+    const wpx = Math.min(120, Math.abs(x.avg ?? 0) * 3);
+    h += `<tr class="clickable" data-open-reseller="${esc(x.r.key)}"><td>${esc(x.r.name)} ${x.r.authorized !== true ? authTag(x.r.authorized) : ""}</td><td class="num">${x.n}</td>
+      <td class="num ${x.bad ? "d-bad" : ""}">${x.bad}</td><td><span class="hbar ${x.avg < 0 ? "neg" : ""}" style="width:${wpx}px"></span> <span class="${dcls(x.avg)}">${x.avg == null ? "—" : pct(x.avg)}</span></td></tr>`;
+  }
+  h += `</tbody></table><p class="hint">Clicca un rivenditore per vedere prodotti e andamento dei prezzi.</p></div>`;
+
+  // Prodotti più scontati
+  const top = [...latest].filter((o) => o.deviation_pct != null).sort((a, b) => a.deviation_pct - b.deviation_pct).slice(0, 12);
+  h += `<div class="card"><h3>I prezzi più bassi rispetto a faced.com</h3><table><thead><tr><th>Prodotto</th><th>Dove</th><th class="num">Prezzo</th><th class="num">Scost.</th></tr></thead><tbody>`;
+  for (const o of top) h += `<tr><td>${pname(o)}</td><td>${esc(o.seller_name && o.site_code === "amazon" ? o.seller_name : o.site_name)}</td>
+    <td class="num"><a href="${esc(o.url)}" target="_blank" rel="noopener">${eur(o.price)}</a></td><td class="num ${dcls(o.deviation_pct)}">${pct(o.deviation_pct)}${o.possible_bundle ? '<span class="tag">bundle?</span>' : ""}</td></tr>`;
+  h += `</tbody></table></div>`;
+
+  // Distribuzione degli scostamenti
+  const bins = [[-100, -30, "oltre −30%"], [-30, -20, "−30 / −20%"], [-20, -10, "−20 / −10%"], [-10, -5, "−10 / −5%"], [-5, 5, "±5%"], [5, 1000, "oltre +5%"]];
+  const dev = latest.map((o) => o.deviation_pct).filter((v) => v != null);
+  const maxBin = Math.max(1, ...bins.map(([a, b]) => dev.filter((v) => v > a && v <= b).length));
+  h += `<div class="card"><h3>Come sono distribuiti i prezzi</h3><table><tbody>`;
+  for (const [a, b, l] of bins) { const n = dev.filter((v) => v > a && v <= b).length;
+    h += `<tr><td style="width:120px">${l}</td><td><span class="hbar ${b <= -20 ? "neg" : ""}" style="width:${n / maxBin * 260}px"></span> ${n}</td></tr>`; }
+  h += `</tbody></table><p class="hint">Numero di offerte per fascia di scostamento dal prezzo Face D.</p></div>`;
+
+  // Variazioni rispetto alla settimana precedente
+  h += `<div class="card" style="grid-column:1/-1"><h3>Cambi di prezzo dalla settimana scorsa</h3><div id="changes"><p class="hint">Caricamento…</p></div></div>`;
+  h += `</div>`;
+  setTimeout(renderChanges, 0);
+  return h;
+}
+
+async function renderChanges() {
+  const el = $("#changes"); if (!el) return;
+  const wk = await loadWeekly();
+  const by = {};
+  for (const w of wk) (by[w.product_id + "|" + w.site_id + "|" + (w.seller_id || "")] ||= []).push(w);
+  const rows = [];
+  for (const [k, arr] of Object.entries(by)) {
+    if (arr.length < 2) continue;
+    const a = arr[arr.length - 2], b = arr[arr.length - 1];
+    const ch = (b.price - a.price) / a.price * 100;
+    if (Math.abs(ch) >= 3) rows.push({ k, a, b, ch });
+  }
+  rows.sort((x, y) => x.ch - y.ch);
+  if (!rows.length) { el.innerHTML = `<p class="hint">Nessun cambio di prezzo superiore al 3%. Lo storico si riempie raccolta dopo raccolta.</p>`; return; }
+  let h = `<table><thead><tr><th>Prodotto</th><th>Dove</th><th class="num">Prima</th><th class="num">Ora</th><th class="num">Var.</th></tr></thead><tbody>`;
+  for (const r of rows.slice(0, 15)) {
+    const p = cache.pmap[r.b.product_id] || {}; const s = cache.smap[r.b.site_id] || {};
+    const sel = r.b.seller_id ? (cache.sellers.find((x) => x.site_id === r.b.site_id && x.seller_id === r.b.seller_id)?.name || r.b.seller_id) : s.name;
+    h += `<tr><td>${pname(p)}</td><td>${esc(sel)}</td><td class="num">${eur(r.a.price)}</td><td class="num">${eur(r.b.price)}</td><td class="num ${r.ch < 0 ? "d-bad" : "d-ok"}">${pct(r.ch)}</td></tr>`;
+  }
+  el.innerHTML = h + `</tbody></table>`;
+}
+
+function viewMatrix() {
+  const { latest, products, sites } = cache;
+  const byKey = {};
+  for (const o of latest) (byKey[o.product_id + ":" + o.site_id] ||= []).push(o);
+  const q = state.q.toLowerCase();
+  let list = products.filter((p) => !q || (p.name + " " + (p.variant || "") + " " + p.ean + " " + (p.sku || "")).toLowerCase().includes(q));
+  if (state.onlyFound) list = list.filter((p) => sites.some((s) => byKey[p.id + ":" + s.id]));
+  if (state.onlyAlerts) list = list.filter((p) => latest.some((o) => o.product_id === p.id && o.deviation_pct <= THRESHOLD));
+  let h = `<h2>Matrice prodotti × siti</h2>
+  <div class="row" style="margin:12px 0 16px">
+    <label class="f">Cerca<input id="fq" value="${esc(state.q)}" placeholder="nome, EAN o SKU" style="width:260px"></label>
+    <label><input type="checkbox" id="fFound" ${state.onlyFound ? "checked" : ""}> solo prodotti trovati online</label>
+    <label><input type="checkbox" id="fAlerts" ${state.onlyAlerts ? "checked" : ""}> solo con tagli oltre 20%</label>
+    <span class="muted">${list.length} di ${products.length} prodotti</span>
+  </div>
+  <div class="card scroll" style="padding:0"><table><thead><tr><th class="sticky">Prodotto</th><th class="num">Prezzo Face D</th>`;
+  for (const s of sites) h += `<th class="num">${esc(s.name)}</th>`;
+  h += `</tr></thead><tbody>`;
+  for (const p of list) {
+    h += `<tr><td class="sticky">${pname(p)}<br><span class="muted" style="font-size:11px">${p.ean}${p.sku ? " · " + esc(p.sku) : ""}</span></td><td class="num">${eur(p.rrp)}</td>`;
+    for (const s of sites) {
+      const obs = byKey[p.id + ":" + s.id] || [];
+      if (!obs.length) { h += `<td class="cell muted">—</td>`; continue; }
+      const best = obs.reduce((a, b) => (a.price <= b.price ? a : b));
+      const bg = best.deviation_pct <= THRESHOLD ? "bg-bad" : best.deviation_pct < -5 ? "bg-warn" : "";
+      const nauth = obs.filter((o) => o.authorized !== true).length;
+      h += `<td class="cell ${bg}"><a href="${esc(best.url)}" target="_blank" rel="noopener">${eur(best.price)}</a>
+        <small class="${dcls(best.deviation_pct)}">${pct(best.deviation_pct)}${best.possible_bundle ? '<span class="tag">bundle?</span>' : ""}</small>
+        ${obs.length > 1 ? `<small class="muted">${obs.length} venditori</small>` : ""}${nauth && s.code === "amazon" ? `<small class="d-bad">${nauth} da verificare</small>` : ""}</td>`;
+    }
+    h += `</tr>`;
+  }
+  h += `</tbody></table></div>
+  <p class="hint">In ogni cella: prezzo più basso degli ultimi 10 giorni e scostamento dal prezzo Face D. Rosso = taglio oltre il 20%, giallo = tra 5% e 20%. Senza prezzo Face D non si calcola lo scostamento.</p>`;
+  return h;
+}
+
+function viewAlerts() {
+  const rows = cache.latest.filter((o) => o.deviation_pct != null && o.deviation_pct <= THRESHOLD).sort((a, b) => a.deviation_pct - b.deviation_pct);
+  let h = `<h2>Tagli oltre il 20%</h2><p class="muted" style="margin-top:0">${rows.length} offerte sotto la soglia.</p>`;
+  if (!rows.length) return h + `<div class="card">Nessun taglio oltre il 20% nelle ultime rilevazioni.</div>`;
+  h += `<div class="card scroll" style="padding:0"><table><thead><tr><th>Prodotto</th><th>Sito</th><th>Venditore</th>
+    <th class="num">Prezzo Face D</th><th class="num">Prezzo rilevato</th><th class="num">Scostamento</th><th>Rilevato il</th></tr></thead><tbody>`;
+  for (const o of rows) h += `<tr><td>${pname(o)}</td><td>${esc(o.site_name)}</td><td>${esc(o.seller_name || o.seller_id || "—")} ${authTag(o.authorized)}</td>
+      <td class="num">${eur(o.rrp)}</td><td class="num"><a href="${esc(o.url)}" target="_blank" rel="noopener">${eur(o.price)}</a></td>
+      <td class="num d-bad">${pct(o.deviation_pct)}${o.possible_bundle ? '<span class="tag">bundle?</span>' : ""}</td><td>${dt(o.observed_at)}</td></tr>`;
+  return h + `</tbody></table></div>`;
+}
+
+function viewResellers() {
+  if (state.reseller) return viewResellerDetail(state.reseller);
+  const rs = resellers().sort((a, b) => b.rows.length - a.rows.length || a.name.localeCompare(b.name));
+  let h = `<h2>Rivenditori</h2><p class="muted" style="margin-top:0">Tutti i siti monitorati e tutti i venditori trovati su Amazon. Clicca una riga per vedere i prodotti venduti e l'andamento dei prezzi nell'ultimo anno.</p>
+  <div class="card scroll" style="padding:0"><table><thead><tr><th>Rivenditore</th><th>Tipo</th><th>Stato</th><th class="num">Prodotti in vendita</th><th class="num">Scost. medio</th><th class="num">Sotto −20%</th><th>Ultimo prezzo</th></tr></thead><tbody>`;
+  for (const r of rs) {
+    const d = r.rows.map((o) => o.deviation_pct).filter((v) => v != null);
+    const last = r.rows.map((o) => o.observed_at).sort().pop();
+    const a = avg(d);
+    const isAmz = !!r.seller;
+    h += `<tr class="clickable" data-open-reseller="${esc(r.key)}"><td><b>${esc(r.name)}</b>${isAmz && r.seller.name ? `<br><span class="muted" style="font-size:11px">${esc(r.seller.seller_id)}</span>` : ""}</td>
+      <td>${esc(r.kind)}</td><td>${authTag(r.authorized)}</td><td class="num">${new Set(r.rows.map((o) => o.product_id)).size}</td>
+      <td class="num ${dcls(a)}">${a == null ? "—" : pct(a)}</td><td class="num ${d.filter((v) => v <= THRESHOLD).length ? "d-bad" : ""}">${d.filter((v) => v <= THRESHOLD).length}</td><td>${dt(last)}</td></tr>`;
+  }
+  return h + `</tbody></table></div>`;
+}
+
+function viewResellerDetail(key) {
+  const r = resellers().find((x) => x.key === key);
+  if (!r) { state.reseller = null; return viewResellers(); }
+  const rows = [...r.rows].sort((a, b) => (a.deviation_pct ?? 0) - (b.deviation_pct ?? 0));
+  let h = `<button class="back" data-back>← Tutti i rivenditori</button>
+  <h2>${esc(r.name)}</h2><p class="muted" style="margin-top:0">${esc(r.kind)} ${authTag(r.authorized)}</p>`;
+  if (r.seller) {
+    h += `<div class="card"><div class="row">
+      <label class="f">Nome venditore<input value="${esc(r.seller.name || "")}" data-seller-name="${r.seller.id}" style="width:240px"></label>
+      <label class="f">Stato<select data-seller-auth="${r.seller.id}">
+        <option value="" ${r.seller.authorized == null ? "selected" : ""}>Da verificare</option>
+        <option value="true" ${r.seller.authorized === true ? "selected" : ""}>Autorizzato</option>
+        <option value="false" ${r.seller.authorized === false ? "selected" : ""}>Non autorizzato</option></select></label>
+      <a class="btn" href="https://www.amazon.it/sp?seller=${encodeURIComponent(r.seller.seller_id)}" target="_blank" rel="noopener">Vetrina Amazon</a>
+      <span class="hint">Le modifiche si salvano da sole e sono visibili a tutti i colleghi.</span></div></div>`;
+  }
+  if (!rows.length) return h + `<div class="card">Nessun prezzo rilevato negli ultimi 10 giorni.</div>`;
+  h += `<div class="card scroll" style="padding:0;max-height:none"><table><thead><tr><th>Prodotto</th><th class="num">Prezzo Face D</th><th class="num">Prezzo attuale</th><th class="num">Scostamento</th><th class="num">Settimane sotto prezzo</th><th>Note</th></tr></thead><tbody id="rdRows">`;
+  for (const o of rows) h += `<tr><td>${pname(o)}</td><td class="num">${eur(o.rrp)}</td><td class="num"><a href="${esc(o.url)}" target="_blank" rel="noopener">${eur(o.price)}</a></td>
+    <td class="num ${dcls(o.deviation_pct)}">${pct(o.deviation_pct)}</td><td class="num" data-dur="${o.product_id}">…</td>
+    <td>${o.possible_bundle ? '<span class="tag">bundle?</span>' : ""}${o.list_price && o.list_price > o.price ? '<span class="tag lim">promo</span>' : ""}${o.in_stock === false ? '<span class="tag">esaurito</span>' : ""}${o.is_buybox ? '<span class="tag">buy box</span>' : ""}</td></tr>`;
+  h += `</tbody></table></div>
+  <h3 style="margin-top:28px">Andamento del prezzo nell'ultimo anno</h3>${legend}
+  <div class="charts" id="rdCharts" style="margin-top:12px"><p class="hint">Caricamento…</p></div>`;
+  setTimeout(() => renderResellerCharts(r, rows), 0);
+  return h;
+}
+
+async function renderResellerCharts(r, rows) {
+  const wk = await loadWeekly();
+  const sellerId = r.seller ? r.seller.seller_id : "";
+  const mine = wk.filter((w) => w.site_id === r.site?.id && (w.seller_id || "") === sellerId);
+  const by = {};
+  for (const w of mine) (by[w.product_id] ||= []).push(w);
+  let h = "";
+  for (const o of rows) {
+    const pts = (by[o.product_id] || []).sort((a, b) => a.week.localeCompare(b.week));
+    // durata dell'offerta: settimane consecutive (fino a oggi) sotto il prezzo Face D di oltre il 5%
+    let dur = 0;
+    if (o.rrp) for (let i = pts.length - 1; i >= 0 && pts[i].price < o.rrp * 0.95; i--) dur++;
+    const cell = document.querySelector(`[data-dur="${o.product_id}"]`); if (cell) cell.textContent = o.rrp ? dur : "—";
+    h += `<div class="chart"><div class="t">${pname(o)}<br><span class="muted">${eur(o.price)} · ${pct(o.deviation_pct)}</span></div>${lineChart(pts, o.rrp ? +o.rrp : null)}</div>`;
+  }
+  $("#rdCharts").innerHTML = h || `<p class="hint">Nessuno storico ancora.</p>`;
+}
+
+function viewPromos() {
+  const { latest } = cache;
+  const promos = latest.filter((o) => (o.list_price && o.list_price > o.price) || (o.deviation_pct != null && o.deviation_pct < -5));
+  const bundles = latest.filter((o) => o.possible_bundle);
+  let h = `<h2>Promozioni e bundle</h2><p class="muted" style="margin-top:0">Offerte sotto il prezzo Face D di oltre il 5% o con prezzo barrato, e pagine che sembrano kit o confezioni multiple.</p>
+  <div class="card"><h3>Promozioni in corso (${promos.length})</h3><div id="promoTbl"><p class="hint">Caricamento…</p></div></div>
+  <div class="card"><h3>Possibili bundle (${bundles.length})</h3>`;
+  if (!bundles.length) h += `<p class="hint">Nessuna pagina riconosciuta come bundle.</p>`;
+  else {
+    h += `<table><thead><tr><th>Prodotto</th><th>Dove</th><th>Titolo della pagina</th><th class="num">Prezzo</th></tr></thead><tbody>`;
+    for (const o of bundles) h += `<tr><td>${pname(o)}</td><td>${esc(o.site_name)}</td><td>${esc(o.title || "")}</td><td class="num"><a href="${esc(o.url)}" target="_blank" rel="noopener">${eur(o.price)}</a></td></tr>`;
+    h += `</tbody></table>`;
+  }
+  h += `</div>`;
+  setTimeout(async () => {
+    const wk = await loadWeekly();
+    const by = {}; for (const w of wk) (by[w.product_id + "|" + w.site_id + "|" + (w.seller_id || "")] ||= []).push(w);
+    const rows = promos.map((o) => {
+      const pts = (by[o.product_id + "|" + o.site_id + "|" + (o.seller_id || "")] || []).sort((a, b) => a.week.localeCompare(b.week));
+      let dur = 0; if (o.rrp) for (let i = pts.length - 1; i >= 0 && pts[i].price < o.rrp * 0.95; i--) dur++;
+      const first = dur ? pts[pts.length - dur].week : null;
+      return { o, dur, first };
+    }).sort((a, b) => b.dur - a.dur || a.o.deviation_pct - b.o.deviation_pct);
+    let t = `<table><thead><tr><th>Prodotto</th><th>Dove</th><th class="num">Prezzo</th><th class="num">Barrato</th><th class="num">Scost.</th><th class="num">Durata</th><th>Dal</th></tr></thead><tbody>`;
+    for (const { o, dur, first } of rows) t += `<tr><td>${pname(o)}</td><td>${esc(o.site_code === "amazon" ? (o.seller_name || o.seller_id) : o.site_name)}</td>
+      <td class="num"><a href="${esc(o.url)}" target="_blank" rel="noopener">${eur(o.price)}</a></td><td class="num">${o.list_price ? eur(o.list_price) : "—"}</td>
+      <td class="num ${dcls(o.deviation_pct)}">${pct(o.deviation_pct)}</td><td class="num">${dur ? dur + " sett." : "—"}</td><td>${dt(first)}</td></tr>`;
+    $("#promoTbl").innerHTML = rows.length ? t + `</tbody></table><p class="hint">Durata: settimane consecutive, fino a oggi, con prezzo sotto quello Face D di oltre il 5%.</p>` : `<p class="hint">Nessuna promozione in corso.</p>`;
+  }, 0);
+  return h;
+}
+
+function viewCoverage() {
+  const { latest, products, sites, urls } = cache;
+  const rows = products.map((p) => {
+    const obs = latest.filter((o) => o.product_id === p.id);
+    const prices = obs.map((o) => +o.price);
+    const nsites = new Set(obs.map((o) => o.site_id)).size;
+    const pages = urls.filter((u) => u.product_id === p.id && u.active).length;
+    return { p, obs, nsites, pages, min: prices.length ? Math.min(...prices) : null, max: prices.length ? Math.max(...prices) : null };
+  });
+  const none = rows.filter((r) => !r.obs.length);
+  let h = `<h2>Copertura</h2><p class="muted" style="margin-top:0">Dove è in vendita ogni prodotto e quanto variano i prezzi tra i rivenditori.</p>
+  <div class="kpis"><div class="kpi"><span>Prodotti trovati online</span><b>${rows.length - none.length}</b></div>
+  <div class="kpi"><span>Mai trovati</span><b>${none.length}</b></div>
+  <div class="kpi"><span>Pagine monitorate</span><b>${urls.filter((u) => u.active).length}</b></div></div>
+  <div class="card scroll" style="padding:0"><table><thead><tr><th>Prodotto</th><th class="num">Prezzo Face D</th><th class="num">Siti</th><th class="num">Offerte</th><th class="num">Min</th><th class="num">Max</th><th class="num">Differenza</th>`;
+  for (const s of sites) h += `<th class="num" title="${esc(s.name)}">${esc(s.code)}</th>`;
+  h += `</tr></thead><tbody>`;
+  for (const r of rows.sort((a, b) => b.nsites - a.nsites || a.p.name.localeCompare(b.p.name))) {
+    h += `<tr><td>${pname(r.p)}<br><span class="muted" style="font-size:11px">${r.p.ean}</span></td><td class="num">${eur(r.p.rrp)}</td><td class="num">${r.nsites}</td><td class="num">${r.obs.length}</td>
+      <td class="num">${eur(r.min)}</td><td class="num">${eur(r.max)}</td><td class="num">${r.min != null && r.max > r.min ? pct((r.max - r.min) / r.max * 100) : "—"}</td>`;
+    for (const s of sites) { const has = r.obs.some((o) => o.site_id === s.id); const pg = cache.urls.some((u) => u.product_id === r.p.id && u.site_id === s.id);
+      h += `<td class="num">${has ? "●" : pg ? '<span class="muted" title="pagina monitorata, nessun prezzo">○</span>' : '<span class="muted">·</span>'}</td>`; }
+    h += `</tr>`;
+  }
+  return h + `</tbody></table></div><p class="hint">● prezzo rilevato · ○ pagina monitorata ma senza prezzo (esaurito o pagina cambiata) · nessun segno: pagina non presente.</p>`;
+}
+
+function productOptions() {
+  return cache.products.map((p) => `<option value="${p.id}">${esc(p.name)}${p.variant ? " – " + esc(p.variant) : ""} (${p.ean})</option>`).join("");
+}
+function viewManage() {
+  const { sites } = cache;
+  return `<h2>Gestione prodotti</h2><p class="muted" style="margin-top:0">Aggiungi un nuovo prodotto al catalogo monitorato, poi indica le pagine dei siti dove è in vendita.</p>
+  <div class="grid">
+  <div class="card"><h3>1 · Nuovo prodotto</h3>
+    <div class="row">
+      <label class="f">EAN<input id="npEan" placeholder="8057741..." style="width:160px"></label>
+      <label class="f">SKU<input id="npSku" style="width:140px"></label>
+    </div><div class="row" style="margin-top:10px">
+      <label class="f">Nome prodotto<input id="npName" style="width:300px"></label>
+      <label class="f">Variante (facoltativa)<input id="npVar" placeholder="es. Light, 50 ml" style="width:140px"></label>
+    </div><div class="row" style="margin-top:10px">
+      <label class="f">Prezzo al pubblico €<input id="npRrp" type="number" step="0.01" min="0" style="width:120px"></label>
+      <button class="pri" id="btnAddProduct">Aggiungi prodotto</button>
+    </div><p id="npMsg" class="hint"></p>
+    <p class="hint">Amazon viene cercato in automatico tramite EAN alla raccolta successiva. Se il prodotto è su faced.com, il prezzo si aggiorna da solo.</p>
+  </div>
+  <div class="card"><h3>2 · Nuova pagina da monitorare</h3>
+    <label class="f">Prodotto<select id="nuP" style="max-width:100%">${productOptions()}</select></label>
+    <div class="row" style="margin-top:10px">
+      <label class="f">Sito<select id="nuS">${sites.filter((s) => s.kind !== "amazon").map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("")}</select></label>
+      <label class="f" style="flex:1">Indirizzo della pagina<input id="nuU" placeholder="https://..." style="width:100%"></label>
+    </div>
+    <div class="row" style="margin-top:10px"><button class="pri" id="btnAddUrl">Aggiungi pagina</button></div>
+    <p id="nuMsg" class="hint"></p>
+    <p class="hint">Per Amazon non serve: i prezzi arrivano dalle API ufficiali.</p>
+  </div></div>
+  <div class="card scroll" style="padding:0"><table><thead><tr><th>Prodotto</th><th>EAN</th><th>SKU</th><th class="num">Prezzo Face D</th><th class="num">Pagine</th></tr></thead><tbody>
+  ${cache.products.map((p) => `<tr><td>${pname(p)}</td><td>${p.ean}</td><td>${esc(p.sku || "")}</td>
+    <td class="num"><input type="number" step="0.01" min="0" value="${p.rrp ?? ""}" data-rrp="${p.id}" style="width:90px;text-align:right"></td>
+    <td class="num">${cache.urls.filter((u) => u.product_id === p.id).length}</td></tr>`).join("")}
+  </tbody></table></div><p class="hint">Puoi correggere il prezzo Face D direttamente in tabella: si salva quando esci dalla casella.</p>`;
+}
+
+function viewUrls() {
+  const { urls, pmap, smap } = cache;
+  let h = `<h2>Pagine monitorate</h2><p class="muted" style="margin-top:0">${urls.length} pagine. Per aggiungerne una vai in Gestione prodotti.</p>
+  <div class="card scroll" style="padding:0"><table><thead><tr><th>Prodotto</th><th>Sito</th><th>Pagina</th><th>Attiva</th></tr></thead><tbody>`;
+  for (const u of [...urls].sort((a, b) => (pmap[a.product_id]?.name || "").localeCompare(pmap[b.product_id]?.name || "") || a.site_id - b.site_id)) {
+    h += `<tr><td>${pname(pmap[u.product_id] || {})}</td><td>${esc(smap[u.site_id]?.name)}</td>
+      <td style="max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><a href="${esc(u.url)}" target="_blank" rel="noopener">${esc(u.url)}</a></td>
+      <td><input type="checkbox" data-url-active="${u.id}" ${u.active ? "checked" : ""}></td></tr>`;
+  }
+  return h + `</tbody></table></div>`;
+}
+
+function viewRuns() {
+  let h = `<h2>Raccolte</h2><p class="muted" style="margin-top:0">Lunedì e giovedì mattina: server GitHub (Amazon, Redcare, BENU, faced.com) e PC dell'ufficio (Atida, Pinalli, Sephora).</p>
+  <div class="card scroll" style="padding:0"><table><thead><tr><th>#</th><th>Inizio</th><th>Esito</th><th class="num">Prezzi trovati</th><th class="num">Errori</th><th>Note</th></tr></thead><tbody>`;
+  for (const r of cache.runs) {
+    const s = r.summary || {};
+    h += `<tr><td>${r.id}</td><td>${new Date(r.started_at).toLocaleString("it-IT")}</td><td>${esc(r.status)}</td>
+      <td class="num">${s.prices_found ?? ""}</td><td class="num">${s.errors ?? ""}</td>
+      <td><details><summary class="muted">dettagli</summary><pre style="white-space:pre-wrap;font-size:12px">${esc((s.log || []).join("\n"))}</pre></details></td></tr>`;
+  }
+  return h + `</tbody></table></div>`;
+}
+
+const views = { overview: viewOverview, matrix: viewMatrix, alerts: viewAlerts, resellers: viewResellers, promos: viewPromos,
+  coverage: viewCoverage, manage: viewManage, urls: viewUrls, runs: viewRuns };
+
+function draw() { $("#view").innerHTML = views[state.view](); }
+async function render(reload = true) {
+  if (reload) { $("#view").innerHTML = `<p class="muted">Caricamento…</p>`; }
+  try { if (reload) { await load(); } draw(); }
+  catch (e) { $("#view").innerHTML = `<p class="err">Errore: ${esc(e.message || e)}</p>`; }
+}
+function go(view, reseller = null) {
+  state.view = view; state.reseller = reseller;
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.v === view));
+  draw(); window.scrollTo(0, 0);
+}
+
+document.addEventListener("input", (ev) => {
+  if (ev.target.id === "fq") { state.q = ev.target.value; const pos = ev.target.selectionStart; draw(); const f = $("#fq"); f.focus(); f.setSelectionRange(pos, pos); }
+});
+document.addEventListener("change", async (ev) => {
+  const t = ev.target;
+  if (t.id === "fFound") { state.onlyFound = t.checked; draw(); }
+  else if (t.id === "fAlerts") { state.onlyAlerts = t.checked; draw(); }
+  else if (t.dataset.sellerAuth) {
+    const v = t.value === "" ? null : t.value === "true";
+    const { error } = await sb.from("sellers").update({ authorized: v }).eq("id", t.dataset.sellerAuth);
+    if (error) alert("Non salvato: " + error.message); else { const s = cache.sellers.find((x) => x.id == t.dataset.sellerAuth); if (s) s.authorized = v; }
+  } else if (t.dataset.sellerName) {
+    const { error } = await sb.from("sellers").update({ name: t.value || null }).eq("id", t.dataset.sellerName);
+    if (error) alert("Non salvato: " + error.message); else { const s = cache.sellers.find((x) => x.id == t.dataset.sellerName); if (s) s.name = t.value || null; }
+  } else if (t.dataset.urlActive) {
+    await sb.from("product_urls").update({ active: t.checked }).eq("id", t.dataset.urlActive);
+  } else if (t.dataset.rrp) {
+    const v = t.value === "" ? null : Math.round(parseFloat(t.value.replace(",", ".")) * 100) / 100;
+    const { error } = await sb.from("products").update({ rrp: v, updated_at: new Date().toISOString() }).eq("id", t.dataset.rrp);
+    t.style.borderColor = error ? "var(--bad)" : "var(--ok)";
+    if (!error) cache.pmap[t.dataset.rrp].rrp = v;
+  }
+});
+
+document.addEventListener("click", async (ev) => {
+  const t = ev.target.closest("button, tr[data-open-reseller]") || ev.target;
+  if (t.matches?.("#tabs button")) go(t.dataset.v);
+  else if (t.dataset?.openReseller) go("resellers", t.dataset.openReseller);
+  else if (t.dataset && "back" in t.dataset) go("resellers");
+  else if (t.id === "btnAddUrl") {
+    const url = $("#nuU").value.trim();
+    if (!/^https?:\/\//.test(url)) { $("#nuMsg").textContent = "Inserisci un indirizzo che inizi con https://"; return; }
+    const { error } = await sb.from("product_urls").insert({ product_id: +$("#nuP").value, site_id: +$("#nuS").value, url });
+    $("#nuMsg").textContent = error ? "Errore: " + error.message : "Pagina aggiunta: sarà letta alla prossima raccolta.";
+    if (!error) { $("#nuU").value = ""; await load(); }
+  } else if (t.id === "btnAddProduct") {
+    const ean = $("#npEan").value.trim(), name = $("#npName").value.trim();
+    const rrp = $("#npRrp").value === "" ? null : Math.round(parseFloat($("#npRrp").value.replace(",", ".")) * 100) / 100;
+    if (!/^\d{8,14}$/.test(ean)) { $("#npMsg").textContent = "L'EAN deve contenere solo cifre (8–14)."; return; }
+    if (!name) { $("#npMsg").textContent = "Inserisci il nome del prodotto."; return; }
+    const { error } = await sb.from("products").insert({ ean, sku: $("#npSku").value.trim() || null, name, variant: $("#npVar").value.trim() || null, rrp });
+    $("#npMsg").textContent = error ? (error.code === "23505" ? "Questo EAN è già in catalogo." : "Errore: " + error.message) : "Prodotto aggiunto. Ora puoi indicare le sue pagine qui accanto.";
+    if (!error) { await load(); draw(); const p = cache.products.find((x) => x.ean === ean); if (p) $("#nuP").value = p.id; }
+  } else if (t.id === "btnLogin") {
+    $("#loginErr").textContent = "";
+    const { error } = await sb.auth.signInWithPassword({ email: $("#em").value.trim(), password: $("#pw").value });
+    if (error) $("#loginErr").textContent = "Accesso non riuscito: controlla email e password.";
+  } else if (t.id === "btnOut") {
+    await sb.auth.signOut();
+  }
+});
+
+sb.auth.onAuthStateChange((_e, session) => {
+  $("#login").hidden = !!session; $("#app").hidden = !session;
+  if (session) { $("#who").textContent = session.user.email; render(); }
+});
+</script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Face D — Monitoraggio prezzi</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root { --bg:#f7f6f3; --card:#fff; --ink:#1f1f1f; --mut:#6b6b6b; --line:#e4e1da;
