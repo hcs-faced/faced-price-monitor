@@ -6,6 +6,7 @@ Passi:
 3. legge le offerte Amazon.it via SP-API
 4. salva tutto in observations e chiude il run con un riepilogo
 """
+import os
 import sys
 import traceback
 
@@ -25,17 +26,29 @@ def main() -> int:
         products = db.select("products", "select=*&active=eq.true&in_prototype=eq.true&order=id")
         sites = {s["code"]: s for s in db.select("sites")}
 
-        summary["rrp_updated"] = faced.refresh_rrp(products, log)
+        # Filtri per sito: il repository pubblico salta i siti che bloccano GitHub
+        # (EXCLUDE_SITES), il PC dell'ufficio legge solo quelli (ONLY_SITES).
+        only = {s.strip() for s in os.environ.get("ONLY_SITES", "").split(",") if s.strip()}
+        exclude = {s.strip() for s in os.environ.get("EXCLUDE_SITES", "").split(",") if s.strip()}
+        code_of = {s["id"]: s["code"] for s in sites.values()}
+
+        if os.environ.get("SKIP_RRP") != "1":
+            summary["rrp_updated"] = faced.refresh_rrp(products, log)
 
         urls = db.select(
             "product_urls",
             "select=*,products!inner(active,in_prototype,ean,variant)&active=eq.true"
             "&products.active=eq.true&products.in_prototype=eq.true",
         )
+        urls = [u for u in urls
+                if (not only or code_of.get(u["site_id"]) in only)
+                and code_of.get(u["site_id"]) not in exclude]
         rows = retailers.collect(urls, run_id, log)
         summary["retailer_rows"] = len(rows)
 
-        if amazon.enabled() and "amazon" in sites:
+        if os.environ.get("SKIP_AMAZON") == "1":
+            pass
+        elif amazon.enabled() and "amazon" in sites:
             arows = amazon.collect(products, sites["amazon"]["id"], run_id, log)
             summary["amazon_rows"] = len(arows)
             rows += arows
