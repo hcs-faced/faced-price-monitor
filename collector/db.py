@@ -26,6 +26,15 @@ def insert(table: str, rows, upsert_on: str | None = None, returning: bool = Fal
         rows = [rows]
     if not rows:
         return []
+    # PostgREST vuole le stesse chiavi in tutte le righe: raggruppa per insieme di colonne
+    groups: dict[tuple, list] = {}
+    for row in rows:
+        groups.setdefault(tuple(sorted(row)), []).append(row)
+    if len(groups) > 1:
+        out = []
+        for group in groups.values():
+            out += insert(table, group, upsert_on, returning)
+        return out
     headers = dict(_HEADERS)
     prefer = ["return=representation" if returning else "return=minimal"]
     url = _url(table)
