@@ -17,7 +17,8 @@ def collect(product_urls: list[dict], run_id: int, log: list) -> list[dict]:
             if r.status_code != 200:
                 row["error"] = f"HTTP {r.status_code}"
             else:
-                offer = extract_offer(r.text)
+                prod = pu.get("products") or {}
+                offer = extract_offer(r.text, prod.get("ean"), prod.get("variant"))
                 row.update(
                     title=(offer["title"] or "")[:300] or None,
                     price=offer["price"],
