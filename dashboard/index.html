@@ -72,6 +72,7 @@
   #login input { width:100%; margin:6px 0 14px; }
   .back { margin-bottom:16px; }
   .hint { font-size:12px; color:var(--mut); }
+  .desc { margin:2px 0 18px; max-width:900px; color:#333; font-size:14px; line-height:1.55; }
 </style>
 </head>
 <body>
@@ -94,10 +95,10 @@
   </header>
   <nav id="tabs">
     <button data-v="overview" class="on">Panoramica</button>
-    <button data-v="matrix">Matrice prodotti × siti</button>
+    <button data-v="matrix">Prezzi per sito</button>
     <button data-v="alerts">Tagli oltre 20%</button>
     <button data-v="resellers">Rivenditori</button>
-    <button data-v="promos">Promozioni e bundle</button>
+    <button data-v="promos">Bundle</button>
     <button data-v="coverage">Copertura</button>
     <button data-v="manage">Gestione prodotti</button>
     <button data-v="urls">Pagine monitorate</button>
@@ -145,7 +146,9 @@ async function load() {
     fetchAll("product_urls", (q) => q.order("id")),
     sb.from("runs").select("*").order("id", { ascending: false }).limit(30).then((r) => { if (r.error) throw r.error; return r.data; }),
   ]);
-  cache = { latest, products, sites, sellers, urls, runs,
+  // solo i prodotti attivi (i prodotti esclusi spariscono anche da rivenditori e analisi)
+  const active = new Set(products.map((p) => p.id));
+  cache = { latest: latest.filter((o) => active.has(o.product_id)), products, sites, sellers, urls, runs,
     pmap: Object.fromEntries(products.map((p) => [p.id, p])),
     smap: Object.fromEntries(sites.map((s) => [s.id, s])) };
 }
@@ -211,7 +214,7 @@ function viewOverview() {
   const rs = resellers().filter((r) => r.rows.length);
   const unverified = rs.filter((r) => r.authorized !== true);
   const lastRun = runs[0];
-  let h = `<h2>Panoramica</h2><p class="muted" style="margin-top:0">Ultimi prezzi rilevati (ultimi 10 giorni) confrontati con il prezzo di faced.com.</p>
+  let h = `<h2>Panoramica</h2><p class="desc">Il riassunto della situazione: quanti prodotti sono in vendita online, quanti rivenditori li vendono, quante offerte scendono oltre il 20% sotto il prezzo di faced.com e chi sconta di più. Usa gli ultimi prezzi rilevati (ultimi 10 giorni).</p>
   <div class="kpis">
     <div class="kpi"><span>Prodotti a catalogo</span><b>${products.length}</b></div>
     <div class="kpi"><span>Trovati online</span><b>${found.size}</b></div>
@@ -288,7 +291,7 @@ function viewMatrix() {
   let list = products.filter((p) => !q || (p.name + " " + (p.variant || "") + " " + p.ean + " " + (p.sku || "")).toLowerCase().includes(q));
   if (state.onlyFound) list = list.filter((p) => sites.some((s) => byKey[p.id + ":" + s.id]));
   if (state.onlyAlerts) list = list.filter((p) => latest.some((o) => o.product_id === p.id && o.deviation_pct <= THRESHOLD));
-  let h = `<h2>Matrice prodotti × siti</h2>
+  let h = `<h2>Prezzi per sito</h2><p class="desc">Una riga per ogni prodotto Face D e una colonna per ogni sito. In ogni casella c'è il prezzo più basso trovato su quel sito e lo scostamento dal prezzo di faced.com (rosso: oltre −20%, giallo: tra −5% e −20%; «—»: prodotto non trovato). Leggendo una riga confronti lo stesso prodotto sui vari siti; leggendo una colonna vedi la politica di prezzo di un sito. Clicca il prezzo per aprire la pagina.</p>
   <div class="row" style="margin:12px 0 16px">
     <label class="f">Cerca<input id="fq" value="${esc(state.q)}" placeholder="nome, EAN o SKU" style="width:260px"></label>
     <label><input type="checkbox" id="fFound" ${state.onlyFound ? "checked" : ""}> solo prodotti trovati online</label>
@@ -319,7 +322,7 @@ function viewMatrix() {
 
 function viewAlerts() {
   const rows = cache.latest.filter((o) => o.deviation_pct != null && o.deviation_pct <= THRESHOLD).sort((a, b) => a.deviation_pct - b.deviation_pct);
-  let h = `<h2>Tagli oltre il 20%</h2><p class="muted" style="margin-top:0">${rows.length} offerte sotto la soglia.</p>`;
+  let h = `<h2>Tagli oltre il 20%</h2><p class="desc">Le offerte vendute a un prezzo più basso di oltre il 20% rispetto a faced.com, dalla più scontata. Per ogni offerta: sito, venditore (autorizzato o da verificare), prezzo e data di rilevazione. Oggi: ${rows.length} offerte.</p>`;
   if (!rows.length) return h + `<div class="card">Nessun taglio oltre il 20% nelle ultime rilevazioni.</div>`;
   h += `<div class="card scroll" style="padding:0"><table><thead><tr><th>Prodotto</th><th>Sito</th><th>Venditore</th>
     <th class="num">Prezzo Face D</th><th class="num">Prezzo rilevato</th><th class="num">Scostamento</th><th>Rilevato il</th></tr></thead><tbody>`;
@@ -332,7 +335,7 @@ function viewAlerts() {
 function viewResellers() {
   if (state.reseller) return viewResellerDetail(state.reseller);
   const rs = resellers().sort((a, b) => b.rows.length - a.rows.length || a.name.localeCompare(b.name));
-  let h = `<h2>Rivenditori</h2><p class="muted" style="margin-top:0">Tutti i siti monitorati e tutti i venditori trovati su Amazon. Clicca una riga per vedere i prodotti venduti e l'andamento dei prezzi nell'ultimo anno.</p>
+  let h = `<h2>Rivenditori</h2><p class="desc">Tutti i siti monitorati e ogni singolo venditore trovato su Amazon, con lo stato (autorizzato, non autorizzato, da verificare), quanti prodotti Face D vendono e lo sconto medio. Clicca una riga per vedere i prodotti venduti, da quante settimane sono sotto prezzo e il grafico del prezzo settimana per settimana nell'ultimo anno. Per i venditori Amazon puoi inserire il nome e lo stato.</p>
   <div class="card scroll" style="padding:0"><table><thead><tr><th>Rivenditore</th><th>Tipo</th><th>Stato</th><th class="num">Prodotti in vendita</th><th class="num">Scost. medio</th><th class="num">Sotto −20%</th><th>Ultimo prezzo</th></tr></thead><tbody>`;
   for (const r of rs) {
     const d = r.rows.map((o) => o.deviation_pct).filter((v) => v != null);
@@ -393,35 +396,16 @@ async function renderResellerCharts(r, rows) {
 }
 
 function viewPromos() {
-  const { latest } = cache;
-  const promos = latest.filter((o) => (o.list_price && o.list_price > o.price) || (o.deviation_pct != null && o.deviation_pct < -5));
-  const bundles = latest.filter((o) => o.possible_bundle);
-  let h = `<h2>Promozioni e bundle</h2><p class="muted" style="margin-top:0">Offerte sotto il prezzo Face D di oltre il 5% o con prezzo barrato, e pagine che sembrano kit o confezioni multiple.</p>
-  <div class="card"><h3>Promozioni in corso (${promos.length})</h3><div id="promoTbl"><p class="hint">Caricamento…</p></div></div>
-  <div class="card"><h3>Possibili bundle (${bundles.length})</h3>`;
-  if (!bundles.length) h += `<p class="hint">Nessuna pagina riconosciuta come bundle.</p>`;
-  else {
-    h += `<table><thead><tr><th>Prodotto</th><th>Dove</th><th>Titolo della pagina</th><th class="num">Prezzo</th></tr></thead><tbody>`;
-    for (const o of bundles) h += `<tr><td>${pname(o)}</td><td>${esc(o.site_name)}</td><td>${esc(o.title || "")}</td><td class="num"><a href="${esc(o.url)}" target="_blank" rel="noopener">${eur(o.price)}</a></td></tr>`;
-    h += `</tbody></table>`;
-  }
-  h += `</div>`;
-  setTimeout(async () => {
-    const wk = await loadWeekly();
-    const by = {}; for (const w of wk) (by[w.product_id + "|" + w.site_id + "|" + (w.seller_id || "")] ||= []).push(w);
-    const rows = promos.map((o) => {
-      const pts = (by[o.product_id + "|" + o.site_id + "|" + (o.seller_id || "")] || []).sort((a, b) => a.week.localeCompare(b.week));
-      let dur = 0; if (o.rrp) for (let i = pts.length - 1; i >= 0 && pts[i].price < o.rrp * 0.95; i--) dur++;
-      const first = dur ? pts[pts.length - dur].week : null;
-      return { o, dur, first };
-    }).sort((a, b) => b.dur - a.dur || a.o.deviation_pct - b.o.deviation_pct);
-    let t = `<table><thead><tr><th>Prodotto</th><th>Dove</th><th class="num">Prezzo</th><th class="num">Barrato</th><th class="num">Scost.</th><th class="num">Durata</th><th>Dal</th></tr></thead><tbody>`;
-    for (const { o, dur, first } of rows) t += `<tr><td>${pname(o)}</td><td>${esc(o.site_code === "amazon" ? (o.seller_name || o.seller_id) : o.site_name)}</td>
-      <td class="num"><a href="${esc(o.url)}" target="_blank" rel="noopener">${eur(o.price)}</a></td><td class="num">${o.list_price ? eur(o.list_price) : "—"}</td>
-      <td class="num ${dcls(o.deviation_pct)}">${pct(o.deviation_pct)}</td><td class="num">${dur ? dur + " sett." : "—"}</td><td>${dt(first)}</td></tr>`;
-    $("#promoTbl").innerHTML = rows.length ? t + `</tbody></table><p class="hint">Durata: settimane consecutive, fino a oggi, con prezzo sotto quello Face D di oltre il 5%.</p>` : `<p class="hint">Nessuna promozione in corso.</p>`;
-  }, 0);
-  return h;
+  // Bundle: pagine dei rivenditori con kit, confezioni multiple o prodotti abbinati.
+  // I nostri kit (es. kit di Natale) sono prodotti Face D a catalogo, quindi non sono bundle.
+  const ownKit = (o) => /kit|box|cofanett|tree|xmas|natale/i.test(o.product_name || "");
+  const bundles = cache.latest.filter((o) => o.possible_bundle && !ownKit(o));
+  let h = `<h2>Bundle</h2><p class="desc">Le pagine in cui un rivenditore vende prodotti Face D in kit, in confezioni multiple o abbinati ad altri prodotti (anche di altri marchi). I kit Face D a catalogo, come i kit di Natale, non sono considerati bundle.</p>
+  <div class="card">`;
+  if (!bundles.length) return h + `<p class="hint">Nessun bundle rilevato nelle ultime raccolte.</p></div>`;
+  h += `<table><thead><tr><th>Prodotto</th><th>Dove</th><th>Titolo della pagina</th><th class="num">Prezzo</th><th class="num">Prezzo Face D</th></tr></thead><tbody>`;
+  for (const o of bundles) h += `<tr><td>${pname(o)}</td><td>${esc(o.site_code === "amazon" ? (o.seller_name || o.seller_id) : o.site_name)}</td><td>${esc(o.title || "")}</td><td class="num"><a href="${esc(o.url)}" target="_blank" rel="noopener">${eur(o.price)}</a></td><td class="num">${eur(o.rrp)}</td></tr>`;
+  return h + `</tbody></table></div>`;
 }
 
 function viewCoverage() {
@@ -434,7 +418,7 @@ function viewCoverage() {
     return { p, obs, nsites, pages, min: prices.length ? Math.min(...prices) : null, max: prices.length ? Math.max(...prices) : null };
   });
   const none = rows.filter((r) => !r.obs.length);
-  let h = `<h2>Copertura</h2><p class="muted" style="margin-top:0">Dove è in vendita ogni prodotto e quanto variano i prezzi tra i rivenditori.</p>
+  let h = `<h2>Copertura</h2><p class="desc">Per ogni prodotto: su quanti siti è in vendita, il prezzo più basso e più alto trovati e la differenza tra i due. Serve a vedere quali prodotti sono molto distribuiti, quali non si trovano online e dove i prezzi sono più disallineati.</p>
   <div class="kpis"><div class="kpi"><span>Prodotti trovati online</span><b>${rows.length - none.length}</b></div>
   <div class="kpi"><span>Mai trovati</span><b>${none.length}</b></div>
   <div class="kpi"><span>Pagine monitorate</span><b>${urls.filter((u) => u.active).length}</b></div></div>
@@ -456,7 +440,7 @@ function productOptions() {
 }
 function viewManage() {
   const { sites } = cache;
-  return `<h2>Gestione prodotti</h2><p class="muted" style="margin-top:0">Aggiungi un nuovo prodotto al catalogo monitorato, poi indica le pagine dei siti dove è in vendita.</p>
+  return `<h2>Gestione prodotti</h2><p class="desc">Qui si aggiorna il catalogo monitorato: aggiungi un nuovo prodotto (EAN, SKU, nome, prezzo al pubblico), poi indica le pagine dei siti dove è in vendita. In fondo trovi l'elenco dei prodotti, dove puoi correggere il prezzo Face D.</p>
   <div class="grid">
   <div class="card"><h3>1 · Nuovo prodotto</h3>
     <div class="row">
@@ -490,7 +474,7 @@ function viewManage() {
 
 function viewUrls() {
   const { urls, pmap, smap } = cache;
-  let h = `<h2>Pagine monitorate</h2><p class="muted" style="margin-top:0">${urls.length} pagine. Per aggiungerne una vai in Gestione prodotti.</p>
+  let h = `<h2>Pagine monitorate</h2><p class="desc">L'elenco delle ${urls.length} pagine prodotto che vengono lette a ogni raccolta, con il sito e il collegamento. Togli la spunta per smettere di leggere una pagina. Per aggiungerne una vai in Gestione prodotti.</p>
   <div class="card scroll" style="padding:0"><table><thead><tr><th>Prodotto</th><th>Sito</th><th>Pagina</th><th>Attiva</th></tr></thead><tbody>`;
   for (const u of [...urls].sort((a, b) => (pmap[a.product_id]?.name || "").localeCompare(pmap[b.product_id]?.name || "") || a.site_id - b.site_id)) {
     h += `<tr><td>${pname(pmap[u.product_id] || {})}</td><td>${esc(smap[u.site_id]?.name)}</td>
@@ -501,7 +485,7 @@ function viewUrls() {
 }
 
 function viewRuns() {
-  let h = `<h2>Raccolte</h2><p class="muted" style="margin-top:0">Lunedì e giovedì mattina: server GitHub (Amazon, Redcare, BENU, faced.com) e PC dell'ufficio (Atida, Pinalli, Sephora).</p>
+  let h = `<h2>Raccolte</h2><p class="desc">Lo storico delle raccolte automatiche dei prezzi: lunedì e giovedì mattina dai server GitHub (Amazon, Redcare, BENU, faced.com) e dal PC dell'ufficio (Atida, Pinalli, Sephora). Per ognuna: esito, prezzi trovati ed errori; in «dettagli» le pagine che non è stato possibile leggere.</p>
   <div class="card scroll" style="padding:0"><table><thead><tr><th>#</th><th>Inizio</th><th>Esito</th><th class="num">Prezzi trovati</th><th class="num">Errori</th><th>Note</th></tr></thead><tbody>`;
   for (const r of cache.runs) {
     const s = r.summary || {};
