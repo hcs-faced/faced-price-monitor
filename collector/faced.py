@@ -1,4 +1,6 @@
 """Aggiorna il prezzo di riferimento leggendolo dal sito faced.com (dati pubblici Shopify)."""
+import re
+
 import db
 from common import polite_get, _session
 
@@ -46,7 +48,9 @@ def refresh_rrp(products: list[dict], log: list) -> int:
                 continue
             price = (v.get("price") or 0) / 100
             compare = (v.get("compare_at_price") or 0) / 100
-            rrp = round(max(price, compare), 2)
+            # Kit di Natale: il prezzo barrato è il valore dei prodotti contenuti, vale il prezzo di vendita
+            xmas = re.search(r"xmas|natale|christmas", p.get("name") or "", re.I)
+            rrp = round(price if xmas else max(price, compare), 2)
             old = float(p.get("rrp") or 0)
             if old and abs(rrp - old) / old > 0.30:
                 log.append(f"faced.com {p['ean']}: variazione sospetta {old} -> {rrp}, non aggiornato")
