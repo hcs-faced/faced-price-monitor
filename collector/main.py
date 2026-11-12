@@ -13,6 +13,7 @@ import traceback
 import db
 import faced
 import retailers
+import bundles
 import amazon
 
 
@@ -46,12 +47,26 @@ def main() -> int:
         rows = retailers.collect(urls, run_id, log)
         summary["retailer_rows"] = len(rows)
 
+        # Bundle creati dai rivenditori (kit senza EAN Face D)
+        allowed = {c for c in sites if c != "amazon" and (not only or c in only) and c not in exclude}
+        try:
+            summary.update(bundles.collect(sites, allowed, run_id, log))
+        except Exception as e:  # noqa: BLE001
+            log.append(f"Bundle: {e}")
+
         if os.environ.get("SKIP_AMAZON") == "1":
             pass
         elif amazon.enabled() and "amazon" in sites:
             arows = amazon.collect(products, sites["amazon"]["id"], run_id, log)
             summary["amazon_rows"] = len(arows)
             rows += arows
+            # bundle e altre inserzioni Face D create da venditori terzi
+            try:
+                known = {p["asin"] for p in db.select("products", "select=asin&asin=not.is.null")}
+                summary["amazon_listings_found"] = amazon.discover_listings(known, sites["amazon"]["id"], log)
+                summary["amazon_listings_read"] = amazon.collect_bundles(sites["amazon"]["id"], run_id, log)
+            except Exception as e:  # noqa: BLE001
+                log.append(f"Amazon inserzioni: {e}")
         else:
             log.append("Amazon saltato: credenziali SP-API non configurate")
 
