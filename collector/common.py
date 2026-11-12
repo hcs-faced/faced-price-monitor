@@ -1,5 +1,6 @@
 """Funzioni comuni: richieste HTTP gentili, lettura prezzi, riconoscimento bundle."""
 import json
+import os
 import re
 import time
 import requests
@@ -79,44 +80,95 @@ def _iter_jsonld(soup: BeautifulSoup):
                 yield item
 
 
-def extract_offer(html: str) -> dict:
-    """Legge prezzo, prezzo barrato, disponibilità e titolo da una pagina prodotto.
+VARIANT_WORDS = {
+    "chiara": ["light", "chiara", "clair"],
+    "scura": ["dark", "scura", "fonc"],
+    "light": ["light", "clair", "chiara"],
+    "medium": ["medium"],
+    "caramel": ["caramel"],
+    "30 ml": ["30ml", "30 ml"],
+    "50 ml": ["50ml", "50 ml"],
+}
 
-    Ordine: dati strutturati JSON-LD (schema.org Product), poi meta tag
-    (product:price:amount, og:price:amount, itemprop=price).
-    """
-    soup = BeautifulSoup(html, "html.parser")
-    out = {"price": None, "list_price": None, "in_stock": None, "title": None, "gtin": None}
 
+def _offer_of(item: dict) -> dict:
+    """Prezzo, prezzo barrato e disponibilità dalla prima offerta valida di un Product."""
+    res = {"price": None, "list_price": None, "in_stock": None}
+    offers = item.get("offers")
+    offers = offers if isinstance(offers, list) else [offers] if offers else []
+    for off in offers:
+        if not isinstance(off, dict):
+            continue
+        price = off.get("price") or off.get("lowPrice")
+        specs = off.get("priceSpecification")
+        if isinstance(specs, (dict, list)):
+            for sp in specs if isinstance(specs, list) else [specs]:
+                p = to_price(sp.get("price"))
+                if str(sp.get("priceType", "")).lower().endswith(("listprice", "strikethroughprice")):
+                    res["list_price"] = p
+                elif p is not None and price is None:
+                    price = p
+        if price is not None:
+            res["price"] = to_price(price)
+            avail = str(off.get("availability", "")).lower()
+            if avail:
+                res["in_stock"] = "instock" in avail or "limitedavailability" in avail
+            break
+    return res
+
+
+def _products_in(soup: BeautifulSoup) -> list[dict]:
+    """Tutti i Product del JSON-LD, comprese le varianti dentro un ProductGroup."""
+    out = []
     for item in _iter_jsonld(soup):
         types = item.get("@type")
         types = types if isinstance(types, list) else [types]
-        if "Product" not in types:
-            continue
-        out["title"] = out["title"] or item.get("name")
-        out["gtin"] = out["gtin"] or item.get("gtin13") or item.get("gtin") or item.get("ean")
-        offers = item.get("offers")
-        offers = offers if isinstance(offers, list) else [offers] if offers else []
-        for off in offers:
-            if not isinstance(off, dict):
-                continue
-            price = off.get("price") or off.get("lowPrice")
-            if price is None and isinstance(off.get("priceSpecification"), (dict, list)):
-                specs = off["priceSpecification"]
-                specs = specs if isinstance(specs, list) else [specs]
-                for sp in specs:
-                    p = to_price(sp.get("price"))
-                    if sp.get("priceType", "").lower().endswith(("listprice", "strikethroughprice")):
-                        out["list_price"] = p
-                    elif p is not None and price is None:
-                        price = p
-            if price is not None and out["price"] is None:
-                out["price"] = to_price(price)
-                avail = str(off.get("availability", "")).lower()
-                if avail:
-                    out["in_stock"] = "instock" in avail or "limitedavailability" in avail
-        if out["price"] is not None:
-            break
+        if "ProductGroup" in types:
+            variants = item.get("hasVariant") or []
+            for v in variants if isinstance(variants, list) else [variants]:
+                if isinstance(v, dict):
+                    v.setdefault("_group_name", item.get("name"))
+                    out.append(v)
+        elif "Product" in types:
+            out.append(item)
+    return out
+
+
+def _pick(products: list[dict], ean: str | None, variant: str | None) -> dict | None:
+    with_price = [p for p in products if _offer_of(p)["price"] is not None]
+    if not with_price:
+        return None
+    if ean:
+        for p in with_price:
+            if str(p.get("gtin13") or p.get("gtin") or p.get("ean") or "") == ean:
+                return p
+    if variant and len(with_price) > 1:
+        words = VARIANT_WORDS.get(variant.strip().lower(), [variant.strip().lower()])
+        names = [str(p.get("name") or "").lower().replace(" ml", "ml") for p in with_price]
+        prefix = os.path.commonprefix(names)  # es. "fast anti-dark circles eye cream "
+        for w in words:
+            for p, name in zip(with_price, names):
+                if w.replace(" ml", "ml") in name[len(prefix):]:
+                    return p
+    return with_price[0]
+
+
+def extract_offer(html: str, ean: str | None = None, variant: str | None = None) -> dict:
+    """Legge prezzo, prezzo barrato, disponibilità e titolo da una pagina prodotto.
+
+    Ordine: dati strutturati JSON-LD (schema.org Product / ProductGroup con varianti,
+    scegliendo la variante con lo stesso EAN o con il nome della variante), poi meta tag
+    (product:price:amount, og:price:amount, itemprop=price).
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    out = {"price": None, "list_price": None, "in_stock": None, "title": None, "gtin": None, "matched_ean": False}
+
+    chosen = _pick(_products_in(soup), ean, variant)
+    if chosen:
+        out.update(_offer_of(chosen))
+        out["title"] = chosen.get("name") or chosen.get("_group_name")
+        out["gtin"] = chosen.get("gtin13") or chosen.get("gtin") or chosen.get("ean")
+        out["matched_ean"] = bool(ean and str(out["gtin"] or "") == ean)
 
     if out["price"] is None:
         for sel in [
