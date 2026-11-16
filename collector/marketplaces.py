@@ -7,6 +7,7 @@ Ogni negozio finisce nella tabella `merchants` (una riga per negozio, da approva
 e ogni offerta in `market_offers`, abbinata quando possibile a un prodotto del catalogo.
 """
 import re
+import time
 from datetime import datetime, timezone
 
 from bs4 import BeautifulSoup
@@ -29,10 +30,11 @@ ID_QUERIES = ["pure plump", "pure lift", "pure glowy", "pure drink", "pure peel"
               "mascara", "terra", "eau de toilette", "kit", "cofanetto", "collagene", "vitamina c",
               "hydragel", "super siero", "patch", "crema mani", "spf"]
 
-# negozi che corrispondono a siti già monitorati
-KNOWN = [("redcare", "redcare"), ("amazon", "amazon"), ("benu", "benu"), ("efarma", "atida"),
-         ("atida", "atida"), ("pinalli", "pinalli"), ("sephora", "sephora"), ("douglas", "douglas"),
-         ("faced", "faced"), ("hcs", "faced")]
+# negozi che corrispondono a siti già monitorati: il nome normalizzato deve INIZIARE così
+# (es. "efarma" sì, "semprefarmacia" no). Amazon Marketplace = venditori terzi, da verificare.
+KNOWN = [("redcare", "redcare"), ("amazonmarketplace", "amazon-mp"), ("amazon", "amazon"), ("benu", "benu"),
+         ("efarma", "atida"), ("atida", "atida"), ("pinalli", "pinalli"), ("sephora", "sephora"),
+         ("douglas", "douglas"), ("faced", "faced"), ("hcsitaly", "faced")]
 
 STOP = {"face", "faced", "con", "per", "di", "da", "del", "della", "the", "and", "ml", "pz", "x", "e", "a",
         "in", "al", "il", "la", "le", "spf", "viso"}
@@ -82,6 +84,9 @@ def trovaprezzi(log: list) -> list[dict]:
             url = f"{TP_BASE}/prezzo_{cat}_face_d.aspx" + (f"?page={page}" if page > 1 else "")
             try:
                 r = polite_get(url, min_interval=2.0)
+                if r.status_code in (403, 429):  # a volte blocca per un momento: riprova una volta
+                    time.sleep(20)
+                    r = polite_get(url, min_interval=2.0)
             except Exception as e:  # noqa: BLE001
                 log.append(f"Trovaprezzi {cat} p{page}: {type(e).__name__}")
                 break
@@ -190,12 +195,16 @@ def collect(run_id: int, log: list) -> dict:
         rec["sources"].add(o["source"])
     new_rows, upd_rows = [], []
     for k, rec in by_key.items():
-        site = next((code for sub, code in KNOWN if sub in k), None)
+        site = next((code for pre, code in KNOWN if k.startswith(pre)), None)
+        if site == "amazon-mp":
+            site, auth_mp = "amazon", True
+        else:
+            auth_mp = False
         srcs = sorted(rec["sources"] | set((existing.get(k) or {}).get("sources") or []))
         if k in existing:
             upd_rows.append({"name_key": k, "name": rec["name"], "sources": srcs, "last_seen": now})
         else:
-            auth = True if site == "faced" else (sites.get(site, {}).get("authorized") if site else None)
+            auth = True if site == "faced" else (None if auth_mp or not site else sites.get(site, {}).get("authorized"))
             new_rows.append({"name_key": k, "name": rec["name"], "sources": srcs, "site_code": site,
                              "authorized": auth, "first_seen": now, "last_seen": now})
     if new_rows:
