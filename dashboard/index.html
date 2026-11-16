@@ -98,6 +98,7 @@
     <button data-v="matrix">Prezzi per sito</button>
     <button data-v="alerts">Tagli oltre 20%</button>
     <button data-v="resellers">Rivenditori</button>
+    <button data-v="merchants">Nuovi venditori</button>
     <button data-v="promos">Bundle</button>
     <button data-v="coverage">Copertura</button>
     <button data-v="manage">Gestione prodotti</button>
@@ -138,7 +139,7 @@ async function fetchAll(table, build = (q) => q) {
 }
 
 async function load() {
-  const [latest, products, sites, sellers, urls, runs, bundles] = await Promise.all([
+  const [latest, products, sites, sellers, urls, runs, bundles, merchants, offers] = await Promise.all([
     fetchAll("v_latest"),
     fetchAll("products", (q) => q.eq("active", true).order("name")),
     fetchAll("sites", (q) => q.order("id")),
@@ -146,10 +147,14 @@ async function load() {
     fetchAll("product_urls", (q) => q.order("id")),
     sb.from("runs").select("*").order("id", { ascending: false }).limit(30).then((r) => { if (r.error) throw r.error; return r.data; }),
     fetchAll("bundles", (q) => q.eq("active", true).order("site_id")).catch(() => []),
+    fetchAll("merchants", (q) => q.order("name")).catch(() => []),
+    // offerte sui comparatori degli ultimi 10 giorni
+    fetchAll("market_offers", (q) => q.gte("observed_at", new Date(Date.now() - 10 * 864e5).toISOString())
+      .order("observed_at", { ascending: false })).catch(() => []),
   ]);
   // solo i prodotti attivi (i prodotti esclusi spariscono anche da rivenditori e analisi)
   const active = new Set(products.map((p) => p.id));
-  cache = { latest: latest.filter((o) => active.has(o.product_id)), products, sites, sellers, urls, runs, bundles,
+  cache = { latest: latest.filter((o) => active.has(o.product_id)), products, sites, sellers, urls, runs, bundles, merchants, offers,
     pmap: Object.fromEntries(products.map((p) => [p.id, p])),
     smap: Object.fromEntries(sites.map((s) => [s.id, s])) };
 }
@@ -220,6 +225,7 @@ function viewOverview() {
     <div class="kpi"><span>Prodotti a catalogo</span><b>${products.length}</b></div>
     <div class="kpi"><span>Trovati online</span><b>${found.size}</b></div>
     <div class="kpi"><span>Rivenditori attivi</span><b>${rs.length}</b></div>
+    <div class="kpi"><span>Negozi sui comparatori</span><b>${new Set((cache.offers || []).map((o) => o.merchant_id)).size}</b></div>
     <div class="kpi"><span>Tagli oltre 20%</span><b class="${alerts.length ? "d-bad" : ""}">${alerts.length}</b></div>
     <div class="kpi"><span>Rivenditori da verificare</span><b class="${unverified.length ? "d-bad" : ""}">${unverified.length}</b></div>
     <div class="kpi"><span>Ultima raccolta</span><b style="font-size:18px">${lastRun ? new Date(lastRun.started_at).toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" }) : "—"}</b></div>
@@ -513,7 +519,44 @@ function viewRuns() {
   return h + `</tbody></table></div>`;
 }
 
-const views = { overview: viewOverview, matrix: viewMatrix, alerts: viewAlerts, resellers: viewResellers, promos: viewPromos,
+function viewMerchants() {
+  const { merchants, offers, pmap } = cache;
+  // ultima offerta per negozio + titolo (le raccolte si ripetono)
+  const last = {};
+  for (const o of offers) { const k = o.merchant_id + "|" + o.source + "|" + o.title; if (!last[k]) last[k] = o; }
+  const by = {};
+  for (const o of Object.values(last)) (by[o.merchant_id] ||= []).push(o);
+  const dev = (o) => { const p = pmap[o.product_id]; return p && p.rrp && o.price ? (o.price - p.rrp) / p.rrp * 100 : null; };
+  const rows = merchants.filter((m) => by[m.id]).map((m) => {
+    const list = by[m.id]; const d = list.map(dev).filter((v) => v != null);
+    return { m, list, matched: list.filter((o) => o.product_id).length, minDev: d.length ? Math.min(...d) : null,
+      bad: d.filter((v) => v <= THRESHOLD).length };
+  }).sort((a, b) => (a.m.authorized === null ? 0 : 1) - (b.m.authorized === null ? 0 : 1) || b.list.length - a.list.length);
+  const todo = rows.filter((r) => r.m.authorized === null).length;
+  let h = `<h2>Nuovi venditori</h2><p class="desc">I negozi che vendono prodotti Face D su Trovaprezzi e Idealo, letti a ogni raccolta dal PC dell'ufficio. Per ogni negozio: dove è stato trovato, quante offerte Face D ha, quante sono state abbinate a un nostro prodotto (abbinamento automatico per nome, da controllare) e lo sconto più forte rispetto a faced.com. Imposta lo stato: autorizzato, non autorizzato o da verificare (si salva da solo). Apri "offerte" per vedere i singoli prodotti e prezzi. Oggi: ${rows.length} negozi, ${todo} da verificare.</p>`;
+  if (!rows.length) return h + `<div class="card">Nessuna offerta letta dai comparatori negli ultimi 10 giorni. La ricerca gira con la raccolta del PC dell'ufficio (lunedì e giovedì).</div>`;
+  h += `<div class="card scroll" style="padding:0;max-height:none"><table><thead><tr><th>Negozio</th><th>Trovato su</th><th>Stato</th><th class="num">Offerte</th><th class="num">Abbinate</th><th class="num">Sotto −20%</th><th class="num">Sconto max</th><th>Visto dal</th><th>Offerte</th></tr></thead><tbody>`;
+  for (const r of rows) {
+    const m = r.m;
+    const known = m.site_code ? `<span class="tag">${esc(m.site_code === "faced" ? "Face D" : "già monitorato")}</span>` : "";
+    h += `<tr><td><b>${esc(m.name)}</b> ${known}</td><td>${esc((m.sources || []).join(", "))}</td>
+      <td><select data-merchant-auth="${m.id}">
+        <option value="" ${m.authorized == null ? "selected" : ""}>Da verificare</option>
+        <option value="true" ${m.authorized === true ? "selected" : ""}>Autorizzato</option>
+        <option value="false" ${m.authorized === false ? "selected" : ""}>Non autorizzato</option></select></td>
+      <td class="num">${r.list.length}</td><td class="num">${r.matched}</td>
+      <td class="num ${r.bad ? "d-bad" : ""}">${r.bad}</td><td class="num ${dcls(r.minDev)}">${r.minDev == null ? "—" : pct(r.minDev)}</td>
+      <td>${dt(m.first_seen)}</td>
+      <td><details><summary class="muted">offerte</summary><table style="margin-top:6px">${r.list.sort((a, b) => (dev(a) ?? 0) - (dev(b) ?? 0)).map((o) => {
+        const p = pmap[o.product_id]; const d = dev(o);
+        return `<tr><td style="max-width:380px">${esc(o.title)}${p ? `<br><span class="muted" style="font-size:11px">= ${esc(p.name)}${p.variant ? " · " + esc(p.variant) : ""}</span>` : ""}</td>
+          <td class="num">${eur(o.price)}</td><td class="num">${p ? eur(p.rrp) : "—"}</td><td class="num ${dcls(d)}">${d == null ? "" : pct(d)}</td><td class="muted">${esc(o.source)}</td></tr>`;
+      }).join("")}</table></details></td></tr>`;
+  }
+  return h + `</tbody></table></div><p class="hint">L'abbinamento al prodotto è automatico (parole del nome): se è sbagliato lo scostamento non è affidabile. I negozi segnati "già monitorato" sono i siti che leggiamo anche direttamente.</p>`;
+}
+
+const views = { overview: viewOverview, matrix: viewMatrix, alerts: viewAlerts, resellers: viewResellers, merchants: viewMerchants, promos: viewPromos,
   coverage: viewCoverage, manage: viewManage, urls: viewUrls, runs: viewRuns };
 
 function draw() { $("#view").innerHTML = views[state.view](); }
@@ -542,6 +585,10 @@ document.addEventListener("change", async (ev) => {
   } else if (t.dataset.sellerName) {
     const { error } = await sb.from("sellers").update({ name: t.value || null }).eq("id", t.dataset.sellerName);
     if (error) alert("Non salvato: " + error.message); else { const s = cache.sellers.find((x) => x.id == t.dataset.sellerName); if (s) s.name = t.value || null; }
+  } else if (t.dataset.merchantAuth) {
+    const v = t.value === "" ? null : t.value === "true";
+    const { error } = await sb.from("merchants").update({ authorized: v }).eq("id", t.dataset.merchantAuth);
+    if (error) alert("Non salvato: " + error.message); else { const m = cache.merchants.find((x) => x.id == t.dataset.merchantAuth); if (m) m.authorized = v; }
   } else if (t.dataset.bundleComp) {
     const { error } = await sb.from("bundles").update({ components: t.value || null }).eq("id", t.dataset.bundleComp);
     t.style.borderColor = error ? "var(--bad)" : "var(--ok)";
