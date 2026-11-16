@@ -14,6 +14,7 @@ import db
 import faced
 import retailers
 import bundles
+import marketplaces
 import amazon
 
 
@@ -53,6 +54,13 @@ def main() -> int:
             summary.update(bundles.collect(sites, allowed, run_id, log))
         except Exception as e:  # noqa: BLE001
             log.append(f"Bundle: {e}")
+
+        # Nuovi venditori sui comparatori (Trovaprezzi, Idealo): solo dove MARKETPLACES=1 (PC ufficio)
+        if os.environ.get("MARKETPLACES") == "1":
+            try:
+                summary.update(marketplaces.collect(run_id, log))
+            except Exception as e:  # noqa: BLE001
+                log.append(f"Comparatori: {e}")
 
         if os.environ.get("SKIP_AMAZON") == "1":
             pass
