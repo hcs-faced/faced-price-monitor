@@ -56,13 +56,17 @@ def _tokens(text: str) -> set[str]:
     return {w for w in words if w not in STOP and (len(w) >= 3 or w.isdigit())}
 
 
-def match_product(title: str, products: list[dict]) -> int | None:
-    """Abbina il titolo di un'offerta a un prodotto del catalogo (parole del nome tutte presenti)."""
+def match_product(title: str, products: list[dict], price: float | None = None) -> int | None:
+    """Abbina il titolo di un'offerta a un prodotto del catalogo (parole del nome tutte presenti).
+    Scarta i prodotti con prezzo incoerente (es. stick singolo contro confezione): fuori 35%-250%."""
     tt = _tokens(title)
     best, best_score = None, 0.0
     for p in products:
         pt = _tokens(p["name"])
         if not pt:
+            continue
+        rrp = p.get("rrp")
+        if price and rrp and not (float(rrp) * 0.35 <= price <= float(rrp) * 2.5):
             continue
         score = len(pt & tt) / len(pt)
         if p.get("variant"):
@@ -71,6 +75,7 @@ def match_product(title: str, products: list[dict]) -> int | None:
                 score += 0.1
             elif vt:
                 score -= 0.1
+        score += len(pt) * 0.001  # a parità, il nome più specifico
         if score > best_score:
             best, best_score = p["id"], score
     return best if best_score >= 0.8 else None
@@ -213,7 +218,7 @@ def collect(run_id: int, log: list) -> dict:
         db.insert("merchants", upd_rows, upsert_on="name_key")
     ids = {m["name_key"]: m["id"] for m in db.select("merchants", "select=id,name_key")}
 
-    products = db.select("products", "select=id,name,variant&active=eq.true")
+    products = db.select("products", "select=id,name,variant,rrp&active=eq.true")
     rows = []
     for o in unique:
         k = name_key(o["merchant"])
@@ -221,7 +226,7 @@ def collect(run_id: int, log: list) -> dict:
             continue
         rows.append({"run_id": run_id, "source": o["source"], "merchant_id": ids[k], "title": o["title"],
                      "price": o["price"], "category": o["category"],
-                     "product_id": match_product(o["title"], products)})
+                     "product_id": match_product(o["title"], products, o["price"])})
     for i in range(0, len(rows), 200):
         db.insert("market_offers", rows[i:i + 200])
     return {"market_offers": len(rows), "merchants_new": len(new_rows),
