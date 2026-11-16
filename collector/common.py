@@ -35,6 +35,12 @@ def polite_get(url: str, min_interval: float = 3.0, timeout: int = 30):
     if wait > 0:
         time.sleep(wait)
     _last_call[domain] = time.time()
+    import browser  # siti che bloccano anche curl_cffi: vero browser (solo PC ufficio)
+    if browser.wanted(domain):
+        try:
+            return browser.get(url)
+        except ImportError:
+            pass  # Playwright non installato: richiesta normale
     return _session.get(url, timeout=timeout, allow_redirects=True)
 
 
