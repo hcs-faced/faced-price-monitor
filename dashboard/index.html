@@ -67,7 +67,7 @@
   .chart .t { font-size:12px; margin-bottom:6px; min-height:34px; }
   .legend { font-size:11px; color:var(--mut); }
   .legend i { display:inline-block; width:18px; height:0; border-top:2px solid #000; vertical-align:middle; margin:0 4px 0 10px; }
-  .legend i.rrp { border-top:1px dashed #000; } .legend i.thr { border-top:1px dotted var(--bad); }
+  .legend i.rrp { border-top:1px solid #777; } .legend i.est { border-top:2px dashed #000; } .legend i.thr { border-top:1px dotted var(--bad); }
   #login { max-width:380px; margin:90px auto; }
   #login input { width:100%; margin:6px 0 14px; }
   .back { margin-bottom:16px; }
@@ -214,7 +214,7 @@ function authTag(a) {
 // ---------- Grafico a linee (SVG, senza librerie) ----------
 function lineChart(points, rrp, w = 340, h = 150) {
   // points: [{week:'2026-11-09', price: 12.3}]
-  const end = new Date(); const start = yearStart();
+  const end = yearEnd(); const start = yearStart();
   const pad = { l: 42, r: 8, t: 8, b: 20 };
   const vals = points.map((p) => +p.price).concat(rrp ? [rrp, rrp * 0.8] : []);
   if (!vals.length) return `<p class="hint">Nessun dato</p>`;
@@ -227,10 +227,12 @@ function lineChart(points, rrp, w = 340, h = 150) {
   s += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${h - pad.b}" y2="${h - pad.b}" stroke="#bbb"/>`;
   for (let m = 0; m <= end.getMonth(); m++) { const d = new Date(start.getFullYear(), m, 1); s += `<text x="${X(d)}" y="${h - 5}" font-size="9" text-anchor="${m === 0 ? "start" : "middle"}" fill="#6f6f6f">${MESI[m]}</text>`; }
   if (rrp) {
-    s += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${Y(rrp)}" y2="${Y(rrp)}" stroke="#000" stroke-dasharray="4 3"/>`;
+    s += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${Y(rrp)}" y2="${Y(rrp)}" stroke="#777"/>`;
     s += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${Y(rrp * 0.8)}" y2="${Y(rrp * 0.8)}" stroke="#e22828" stroke-dasharray="1 3"/>`;
   }
   const pts = points.map((p) => [X(p.week), Y(+p.price), p]);
+  s += todayMark(X, pad.t, h - pad.b, 9);
+  if (pts.length) s += unknownSeg(X, Y, pad.l, pts[0][2], "#000", 2);
   if (pts.length > 1) s += `<polyline fill="none" stroke="#000" stroke-width="2" points="${pts.map((p) => p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ")}"/>`;
   for (const [x, y, p] of pts) {
     const bad = rrp && p.price <= rrp * 0.8;
@@ -238,7 +240,7 @@ function lineChart(points, rrp, w = 340, h = 150) {
   }
   return s + `</svg>`;
 }
-const legend = `<div class="legend"><i></i>prezzo minimo della settimana<i class="rrp"></i>prezzo Face D<i class="thr"></i>soglia −20%</div>`;
+const legend = `<div class="legend"><i></i>prezzo minimo della settimana<i class="est"></i>prezzo non noto (prima della prima rilevazione)<i class="rrp"></i>prezzo Face D<i class="thr"></i>soglia −20%</div>`;
 
 // ---------- Storico prezzi settimanale per rivenditore e prodotto ----------
 // chiave: "s|sito|venditore|prodotto" per i siti letti direttamente, "m|negozio|prodotto" per i negozi dei comparatori
@@ -258,11 +260,16 @@ async function ensureHist() {
 
 // Asse dei tempi comune a tutti i grafici: dal 1° gennaio dell'anno in corso a oggi
 const yearStart = () => new Date(new Date().getFullYear(), 0, 1);
+const yearEnd = () => new Date(new Date().getFullYear(), 11, 31, 23, 59);
+// tratto tratteggiato da gennaio alla prima rilevazione: il prezzo di quel periodo non è noto
+const unknownSeg = (X, Y, x0, first, color, sw) => X(first.week) - x0 > 2 ? `<line x1="${x0}" x2="${X(first.week).toFixed(1)}" y1="${Y(+first.price).toFixed(1)}" y2="${Y(+first.price).toFixed(1)}" stroke="${color}" stroke-width="${sw}" stroke-dasharray="4 3" opacity=".75"><title>Prezzo non noto prima del ${dt(first.week)}: la rilevazione è iniziata da quella settimana</title></line>` : "";
+// linea verticale "oggi"
+const todayMark = (X, top, bottom, fs) => { const x = X(new Date()).toFixed(1); return `<line x1="${x}" x2="${x}" y1="${top}" y2="${bottom}" stroke="#bbb" stroke-dasharray="2 2"/><text x="${x}" y="${top + fs}" dx="-3" font-size="${fs}" text-anchor="end" fill="#999">oggi</text>`; };
 const MESI = ["gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"];
 
 // Mini grafico con assi (prezzi in € e mesi), da gennaio a oggi
 function spark(points, rrp, w = 240, h = 72) {
-  const start = yearStart(), end = new Date();
+  const start = yearStart(), end = yearEnd();
   const pts = (points || []).filter((p) => new Date(p.week) >= new Date(start.getTime() - 7 * 864e5));
   if (!pts.length) return `<span class="hint" style="display:inline-block;width:${w}px;text-align:center">nessuno storico</span>`;
   const pad = { l: 34, r: 6, t: 6, b: 14 };
@@ -278,8 +285,9 @@ function spark(points, rrp, w = 240, h = 72) {
   // asse x: un mese sì e uno no
   s += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${h - pad.b}" y2="${h - pad.b}" stroke="#bbb"/><line x1="${pad.l}" x2="${pad.l}" y1="${pad.t}" y2="${h - pad.b}" stroke="#bbb"/>`;
   for (let m = 0; m <= end.getMonth(); m += 2) { const d = new Date(start.getFullYear(), m, 1); s += `<text x="${X(d).toFixed(1)}" y="${h - 3}" font-size="8" text-anchor="${m === 0 ? "start" : "middle"}" fill="#6f6f6f">${MESI[m]}</text>`; }
-  if (rrp) s += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${Y(rrp).toFixed(1)}" y2="${Y(rrp).toFixed(1)}" stroke="#000" stroke-dasharray="3 2"/>`;
+  if (rrp) s += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${Y(rrp).toFixed(1)}" y2="${Y(rrp).toFixed(1)}" stroke="#777"/>`;
   const line = pts.map((p) => X(p.week).toFixed(1) + "," + Y(p.price).toFixed(1)).join(" ");
+  s += todayMark(X, pad.t, h - pad.b, 7) + unknownSeg(X, Y, pad.l, pts[0], "#1a73e8", 1.4);
   if (pts.length > 1) s += `<polygon points="${X(pts[0].week).toFixed(1)},${h - pad.b} ${line} ${X(last.week).toFixed(1)},${h - pad.b}" fill="#e8f0fe"/><polyline points="${line}" fill="none" stroke="#1a73e8" stroke-width="1.6"/>`;
   s += `<circle cx="${X(last.week).toFixed(1)}" cy="${Y(last.price).toFixed(1)}" r="3" fill="${bad ? "#e22828" : "#1a73e8"}"/>`;
   return s + `</svg>`;
@@ -296,7 +304,7 @@ const PALETTE = ["#1a73e8", "#e8710a", "#188038", "#d93025", "#9334e6", "#12b5cb
 function multiChart(series, rrp, w = 900, h = 300) {
   const all = series.flatMap((s) => s.points);
   if (!all.length) return `<p class="hint">Nessuno storico ancora: il grafico si riempie a ogni raccolta.</p>`;
-  const end = new Date(), start = yearStart();
+  const end = yearEnd(), start = yearStart();
   const pad = { l: 46, r: 12, t: 10, b: 24 };
   const vals = all.map((p) => p.price).concat(rrp ? [rrp, rrp * 0.8] : []);
   let lo = Math.min(...vals) * 0.9, hi = Math.max(...vals) * 1.05; if (hi - lo < 1) { hi += 1; lo = Math.max(0, lo - 1); }
@@ -307,11 +315,13 @@ function multiChart(series, rrp, w = 900, h = 300) {
   s += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${h - pad.b}" y2="${h - pad.b}" stroke="#bbb"/>`;
   for (let m = 0; m <= end.getMonth(); m++) { const d = new Date(start.getFullYear(), m, 1); s += `<text x="${X(d)}" y="${h - 6}" font-size="10" text-anchor="${m === 0 ? "start" : "middle"}" fill="#6f6f6f">${MESI[m]}</text>`; }
   if (rrp) {
-    s += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${Y(rrp)}" y2="${Y(rrp)}" stroke="#000" stroke-dasharray="4 3"/>`;
+    s += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${Y(rrp)}" y2="${Y(rrp)}" stroke="#777"/>`;
     s += `<line x1="${pad.l}" x2="${w - pad.r}" y1="${Y(rrp * 0.8)}" y2="${Y(rrp * 0.8)}" stroke="#e22828" stroke-dasharray="1 3"/>`;
   }
+  s += todayMark(X, pad.t, h - pad.b, 10);
   for (const sr of series) {
     const pts = sr.points.map((p) => [X(p.week), Y(p.price), p]);
+    if (pts.length) s += unknownSeg(X, Y, pad.l, sr.points[0], sr.color, 1.6);
     if (pts.length > 1) s += `<polyline fill="none" stroke="${sr.color}" stroke-width="2" points="${pts.map((p) => p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ")}"/>`;
     for (const [x, y, p] of pts) s += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" fill="${sr.color}"><title>${esc(sr.name)} – settimana del ${dt(p.week)}: ${eur(p.price)}${rrp ? " (" + pct((p.price - rrp) / rrp * 100) + ")" : ""}</title></circle>`;
   }
@@ -512,7 +522,7 @@ function viewResellerDetail(key) {
       <td class="num ${dcls(o.deviation_pct)}">${pct(o.deviation_pct)}</td><td class="num" data-dur="${o.product_id}">…</td>
       <td>${o.source ? `<span class="tag">${esc(o.source)}</span>` : ""}${o.possible_bundle ? '<span class="tag">bundle?</span>' : ""}${o.list_price && o.list_price > o.price ? '<span class="tag lim">promo</span>' : ""}${o.in_stock === false ? '<span class="tag">esaurito</span>' : ""}${o.is_buybox ? '<span class="tag">buy box</span>' : ""}</td></tr>`;
     h += `</tbody></table></div>
-    <p class="hint">Mini grafico, da gennaio a oggi: prezzo settimana per settimana (linea blu), prezzo Face D (tratteggio nero); a sinistra i prezzi, sotto i mesi; il punto finale è rosso se l'ultimo prezzo è oltre il 20% sotto. Passa il mouse sul grafico per leggere date e prezzi. Clicca il nome di un prodotto per confrontarlo con tutti gli altri rivenditori.</p>`;
+    <p class="hint">Mini grafico, da gennaio a dicembre: prezzo settimana per settimana (linea blu continua); da gennaio alla prima rilevazione la linea è tratteggiata perché il prezzo di quel periodo non è noto; prezzo Face D (linea grigia); la linea verticale segna oggi; a sinistra i prezzi, sotto i mesi; il punto finale è rosso se l'ultimo prezzo è oltre il 20% sotto. Passa il mouse sul grafico per leggere date e prezzi. Clicca il nome di un prodotto per confrontarlo con tutti gli altri rivenditori.</p>`;
   }
   if (r.merchant) {
     const offs = []; const seen = new Set();
@@ -526,7 +536,7 @@ function viewResellerDetail(key) {
     h += `</tbody></table></details>`;
   }
   if (rows.length) {
-    h += `<h3 style="margin-top:28px">Andamento del prezzo da gennaio a oggi</h3>${legend}
+    h += `<h3 style="margin-top:28px">Andamento del prezzo nell'anno (gennaio–dicembre)</h3>${legend}
     <div class="charts" id="rdCharts" style="margin-top:12px"><p class="hint">Caricamento…</p></div>`;
     setTimeout(() => renderResellerCharts(r, rows), 0);
   }
@@ -570,7 +580,7 @@ async function renderProductChart(p, rows) {
   const hist = await ensureHist(); const el = $("#pChart"); if (!el) return;
   const series = rows.map(({ r }, i) => ({ name: r.name, color: PALETTE[i % PALETTE.length], points: hist[rhk(r) + "|" + p.id] || [] }));
   el.innerHTML = multiChart(series, p.rrp ? +p.rrp : null) +
-    `<div class="mlegend">${series.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join("")}<span><i style="height:0;border-top:1px dashed #000"></i>prezzo Face D</span><span><i style="height:0;border-top:1px dotted #e22828"></i>soglia −20%</span></div>
+    `<div class="mlegend">${series.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join("")}<span><i style="height:0;border-top:2px dashed #000;background:none"></i>prezzo non noto (prima della prima rilevazione)</span><span><i style="height:0;border-top:1px solid #777;background:none"></i>prezzo Face D</span><span><i style="height:0;border-top:1px dotted #e22828"></i>soglia −20%</span></div>
     <p class="hint">Passa il mouse sui punti per leggere rivenditore, settimana e prezzo.</p>`;
 }
 
