@@ -26,11 +26,17 @@ def wanted(domain: str) -> bool:
 def _start():
     from playwright.sync_api import sync_playwright
     pw = sync_playwright().start()
+    # finestra "normale" (il runner è un servizio: non si vede comunque) e senza i segnali
+    # che indicano un browser comandato da un programma
+    headless = os.environ.get("BROWSER_HEADLESS", "0") == "1"
+    args = ["--disable-blink-features=AutomationControlled", "--lang=it-IT"]
     try:
-        br = pw.chromium.launch(channel="chrome", headless=True)
+        br = pw.chromium.launch(channel="chrome", headless=headless, args=args)
     except Exception:  # noqa: BLE001  Chrome non trovato: Chromium di Playwright
-        br = pw.chromium.launch(headless=True)
-    ctx = br.new_context(locale="it-IT", viewport={"width": 1366, "height": 900})
+        br = pw.chromium.launch(headless=headless, args=args)
+    ctx = br.new_context(locale="it-IT", timezone_id="Europe/Rome",
+                         viewport={"width": 1366, "height": 900})
+    ctx.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
     page = ctx.new_page()
     _state.update(pw=pw, br=br, page=page, warm=set())
     atexit.register(close)
@@ -51,7 +57,14 @@ def get(url: str, timeout: int = 45) -> Page:
         _state["warm"].add(domain)
     resp = page.goto(url, timeout=timeout * 1000, wait_until="domcontentloaded")
     page.wait_for_timeout(1500)
-    return Page(resp.status if resp else 0, page.content())
+    status = resp.status if resp else 0
+    if status == 403:
+        # alcuni siti fanno un controllo con script e poi lasciano passare: riprova una volta
+        page.wait_for_timeout(6000)
+        resp = page.reload(timeout=timeout * 1000, wait_until="domcontentloaded")
+        page.wait_for_timeout(1500)
+        status = resp.status if resp else status
+    return Page(status, page.content())
 
 
 def close():
