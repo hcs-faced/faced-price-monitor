@@ -527,29 +527,51 @@ function viewMerchants() {
   const by = {};
   for (const o of Object.values(last)) (by[o.merchant_id] ||= []).push(o);
   const dev = (o) => { const p = pmap[o.product_id]; return p && p.rrp && o.price ? (o.price - p.rrp) / p.rrp * 100 : null; };
+  // Amazon: i comparatori scrivono solo "Amazon.it" / "Marketplace"; il venditore vero si ricava
+  // dalle offerte lette da Amazon (stesso prodotto e stesso prezzo)
+  const amzId = cache.sites.find((s) => s.code === "amazon")?.id;
+  const amzRows = cache.latest.filter((l) => l.site_id === amzId);
+  const isAmzM = (m) => m.site_code === "amazon";
+  const amzSeller = (o) => {
+    if (!o.product_id || !o.price) return null;
+    const c = amzRows.find((l) => l.product_id === o.product_id && Math.abs(+l.price - o.price) < 0.02);
+    if (!c) return null;
+    const name = c.seller_name || c.seller_id || "Amazon";
+    const ours = /hcs|face\s*d/i.test(name);
+    return { name, ours, authorized: c.authorized, label: name + (ours ? " (nostro store)" : "") };
+  };
+  const sellerTag = (o) => { const sl = amzSeller(o);
+    return sl ? `<br><span class="tag ${sl.ours || sl.authorized === true ? "ok" : sl.authorized === false ? "bad" : ""}">venduto da ${esc(sl.label)}</span>`
+      : `<br><span class="tag">venditore non identificato</span>`; };
   const rows = merchants.filter((m) => by[m.id]).map((m) => {
     const list = by[m.id]; const d = list.map(dev).filter((v) => v != null);
     return { m, list, matched: list.filter((o) => o.product_id).length, minDev: d.length ? Math.min(...d) : null,
       bad: d.filter((v) => v <= THRESHOLD).length };
   }).sort((a, b) => (a.m.authorized === null ? 0 : 1) - (b.m.authorized === null ? 0 : 1) || b.list.length - a.list.length);
   const todo = rows.filter((r) => r.m.authorized === null).length;
-  let h = `<h2>Nuovi venditori</h2><p class="desc">I negozi che vendono prodotti Face D su Trovaprezzi e Idealo, letti a ogni raccolta dal PC dell'ufficio. Per ogni negozio: dove è stato trovato, quante offerte Face D ha, quante sono state abbinate a un nostro prodotto (abbinamento automatico per nome, da controllare) e lo sconto più forte rispetto a faced.com. Imposta lo stato: autorizzato, non autorizzato o da verificare (si salva da solo). Apri "offerte" per vedere i singoli prodotti e prezzi. Oggi: ${rows.length} negozi, ${todo} da verificare.</p>`;
+  let h = `<h2>Nuovi venditori</h2><p class="desc">I negozi che vendono prodotti Face D su Trovaprezzi e Idealo, letti a ogni raccolta dal PC dell'ufficio. Per ogni negozio: dove è stato trovato, quante offerte Face D ha, quante sono state abbinate a un nostro prodotto (abbinamento automatico per nome, da controllare) e lo sconto più forte rispetto a faced.com. Imposta lo stato: autorizzato, non autorizzato o da verificare (si salva da solo). Apri "offerte" per vedere i singoli prodotti e prezzi. Per Amazon i comparatori non dicono chi vende: il venditore (es. HCS srl, il nostro store) viene ricavato dalle offerte lette da Amazon con stesso prodotto e prezzo. Oggi: ${rows.length} negozi, ${todo} da verificare.</p>`;
   if (!rows.length) return h + `<div class="card">Nessuna offerta letta dai comparatori negli ultimi 10 giorni. La ricerca gira con la raccolta del PC dell'ufficio (lunedì e giovedì).</div>`;
   h += `<div class="card scroll" style="padding:0;max-height:none"><table><thead><tr><th>Negozio</th><th>Trovato su</th><th>Stato</th><th class="num">Offerte</th><th class="num">Abbinate</th><th class="num">Sotto −20%</th><th class="num">Sconto max</th><th>Visto dal</th><th>Offerte</th></tr></thead><tbody>`;
   for (const r of rows) {
     const m = r.m;
     const known = m.site_code ? `<span class="tag">${esc(m.site_code === "faced" ? "Face D" : "già monitorato")}</span>` : "";
-    h += `<tr><td><b>${esc(m.name)}</b> ${known}</td><td>${esc((m.sources || []).join(", "))}</td>
-      <td><select data-merchant-auth="${m.id}">
+    let amzSummary = "";
+    if (isAmzM(m)) {
+      const cnt = {};
+      for (const o of r.list) { const sl = amzSeller(o); const k = sl ? sl.label : "non identificato"; cnt[k] = (cnt[k] || 0) + 1; }
+      amzSummary = `<br><span class="muted" style="font-size:12px">Venditori: ${Object.entries(cnt).sort((a, b) => b[1] - a[1]).map(([k, v]) => esc(k) + " ×" + v).join(", ")}</span>`;
+    }
+    h += `<tr><td><b>${esc(m.name)}</b> ${known}${amzSummary}</td><td>${esc((m.sources || []).join(", "))}</td>
+      <td>${isAmzM(m) ? `<span class="hint">Stato per singolo venditore nella scheda Rivenditori</span>` : `<select data-merchant-auth="${m.id}">
         <option value="" ${m.authorized == null ? "selected" : ""}>Da verificare</option>
         <option value="true" ${m.authorized === true ? "selected" : ""}>Autorizzato</option>
-        <option value="false" ${m.authorized === false ? "selected" : ""}>Non autorizzato</option></select></td>
+        <option value="false" ${m.authorized === false ? "selected" : ""}>Non autorizzato</option></select>`}</td>
       <td class="num">${r.list.length}</td><td class="num">${r.matched}</td>
       <td class="num ${r.bad ? "d-bad" : ""}">${r.bad}</td><td class="num ${dcls(r.minDev)}">${r.minDev == null ? "—" : pct(r.minDev)}</td>
       <td>${dt(m.first_seen)}</td>
       <td><details><summary class="muted">offerte</summary><table style="margin-top:6px">${r.list.sort((a, b) => (dev(a) ?? 0) - (dev(b) ?? 0)).map((o) => {
         const p = pmap[o.product_id]; const d = dev(o);
-        return `<tr><td style="max-width:380px">${esc(o.title)}${p ? `<br><span class="muted" style="font-size:11px">= ${esc(p.name)}${p.variant ? " · " + esc(p.variant) : ""}</span>` : ""}</td>
+        return `<tr><td style="max-width:380px">${esc(o.title)}${p ? `<br><span class="muted" style="font-size:11px">= ${esc(p.name)}${p.variant ? " · " + esc(p.variant) : ""}</span>` : ""}${isAmzM(m) ? sellerTag(o) : ""}</td>
           <td class="num">${eur(o.price)}</td><td class="num">${p ? eur(p.rrp) : "—"}</td><td class="num ${dcls(d)}">${d == null ? "" : pct(d)}</td><td class="muted">${esc(o.source)}</td></tr>`;
       }).join("")}</table></details></td></tr>`;
   }
