@@ -204,6 +204,8 @@ function resellers() {
   return Object.values(map);
 }
 const rhk = (r) => (r.merchant ? r.key : "s|" + r.key);
+// tutte le ultime offerte di tutti i rivenditori (siti, venditori Amazon, negozi dei comparatori)
+function allOffers() { const out = []; for (const r of resellers()) for (const o of r.rows) out.push({ ...o, _r: r }); return out; }
 const ours = (r) => /\bhcs\b|face\s*d/i.test(r.name || "");
 function authTag(a) {
   return a === true ? '<span class="tag ok">autorizzato</span>' : a === false ? '<span class="tag bad">non autorizzato</span>' : '<span class="tag bad">da verificare</span>';
@@ -318,21 +320,18 @@ function multiChart(series, rrp, w = 900, h = 300) {
 
 // ---------- Viste ----------
 function viewOverview() {
-  const { latest, products, runs } = cache;
-  const found = new Set(latest.map((o) => o.product_id));
-  const alerts = latest.filter((o) => o.deviation_pct != null && o.deviation_pct <= THRESHOLD);
-  const rs = resellers().filter((r) => r.rows.length);
-  const unverified = rs.filter((r) => r.authorized !== true);
-  const lastRun = runs[0];
-  let h = `<h2>Panoramica</h2><p class="desc">Il riassunto della situazione: quanti prodotti sono in vendita online, quanti rivenditori li vendono, quante offerte scendono oltre il 20% sotto il prezzo di faced.com e chi sconta di più. Usa gli ultimi prezzi rilevati (ultimi 10 giorni).</p>
+  const all = resellers(), offers = allOffers();
+  const found = new Set(offers.map((o) => o.product_id));
+  const alerts = offers.filter((o) => o.deviation_pct != null && o.deviation_pct <= THRESHOLD);
+  const rs = all.filter((r) => r.rows.length);
+  const unverified = all.filter((r) => r.authorized == null);
+  let h = `<h2>Panoramica</h2><p class="desc">Il riassunto della situazione su tutti i rivenditori (siti monitorati, venditori Amazon e negozi trovati su Trovaprezzi e Idealo): quanti prodotti Face D sono in vendita presso terzi, quanti rivenditori ci sono, quante offerte scendono oltre il 20% sotto il prezzo di faced.com e chi sconta di più. Usa gli ultimi prezzi rilevati (ultimi 10 giorni). I numeri coincidono con la scheda Rivenditori.</p>
   <div class="kpis">
-    <div class="kpi"><span>Prodotti a catalogo</span><b>${products.length}</b></div>
-    <div class="kpi"><span>Trovati online</span><b>${found.size}</b></div>
-    <div class="kpi"><span>Rivenditori attivi</span><b>${rs.length}</b></div>
-    <div class="kpi"><span>Negozi sui comparatori</span><b>${new Set((cache.offers || []).map((o) => o.merchant_id)).size}</b></div>
+    <div class="kpi"><span>Prodotti in vendita presso terzi</span><b>${found.size}</b></div>
+    <div class="kpi"><span>Rivenditori</span><b>${all.length}</b></div>
+    <div class="kpi"><span>Di cui negozi dai comparatori</span><b>${all.filter((r) => r.merchant).length}</b></div>
     <div class="kpi"><span>Tagli oltre 20%</span><b class="${alerts.length ? "d-bad" : ""}">${alerts.length}</b></div>
     <div class="kpi"><span>Rivenditori da verificare</span><b class="${unverified.length ? "d-bad" : ""}">${unverified.length}</b></div>
-    <div class="kpi"><span>Ultima raccolta</span><b style="font-size:18px">${lastRun ? new Date(lastRun.started_at).toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" }) : "—"}</b></div>
   </div><div class="grid">`;
 
   // Indice prezzi per rivenditore
@@ -349,15 +348,15 @@ function viewOverview() {
   h += `</tbody></table><p class="hint">Clicca un rivenditore per vedere prodotti e andamento dei prezzi.</p></div>`;
 
   // Prodotti più scontati
-  const top = [...latest].filter((o) => o.deviation_pct != null).sort((a, b) => a.deviation_pct - b.deviation_pct).slice(0, 12);
+  const top = [...offers].filter((o) => o.deviation_pct != null).sort((a, b) => a.deviation_pct - b.deviation_pct).slice(0, 12);
   h += `<div class="card"><h3>I prezzi più bassi rispetto a faced.com</h3><table><thead><tr><th>Prodotto</th><th>Dove</th><th class="num">Prezzo</th><th class="num">Scost.</th></tr></thead><tbody>`;
-  for (const o of top) h += `<tr><td>${plink(o, o.product_id)}</td><td>${esc(o.seller_name && o.site_code === "amazon" ? o.seller_name : o.site_name)}</td>
-    <td class="num"><a href="${esc(o.url)}" target="_blank" rel="noopener">${eur(o.price)}</a></td><td class="num ${dcls(o.deviation_pct)}">${pct(o.deviation_pct)}${o.possible_bundle ? '<span class="tag">bundle?</span>' : ""}</td></tr>`;
+  for (const o of top) h += `<tr><td>${plink(o, o.product_id)}</td><td><a href="#" data-open-reseller="${esc(o._r.key)}">${esc(o._r.name)}</a></td>
+    <td class="num">${o.url ? `<a href="${esc(o.url)}" target="_blank" rel="noopener">${eur(o.price)}</a>` : eur(o.price)}</td><td class="num ${dcls(o.deviation_pct)}">${pct(o.deviation_pct)}${o.possible_bundle ? '<span class="tag">bundle?</span>' : ""}</td></tr>`;
   h += `</tbody></table></div>`;
 
   // Distribuzione degli scostamenti
   const bins = [[-100, -30, "oltre −30%"], [-30, -20, "−30 / −20%"], [-20, -10, "−20 / −10%"], [-10, -5, "−10 / −5%"], [-5, 5, "±5%"], [5, 1000, "oltre +5%"]];
-  const dev = latest.map((o) => o.deviation_pct).filter((v) => v != null);
+  const dev = offers.map((o) => o.deviation_pct).filter((v) => v != null);
   const maxBin = Math.max(1, ...bins.map(([a, b]) => dev.filter((v) => v > a && v <= b).length));
   h += `<div class="card"><h3>Come sono distribuiti i prezzi</h3><table><tbody>`;
   for (const [a, b, l] of bins) { const n = dev.filter((v) => v > a && v <= b).length;
@@ -373,24 +372,22 @@ function viewOverview() {
 
 async function renderChanges() {
   const el = $("#changes"); if (!el) return;
-  const wk = await loadWeekly();
-  const by = {};
-  for (const w of wk) (by[w.product_id + "|" + w.site_id + "|" + (w.seller_id || "")] ||= []).push(w);
+  const hist = await ensureHist();
+  const byHk = Object.fromEntries(resellers().map((r) => [rhk(r), r]));
   const rows = [];
-  for (const [k, arr] of Object.entries(by)) {
+  for (const [k, arr] of Object.entries(hist)) {
     if (arr.length < 2) continue;
+    const i = k.lastIndexOf("|"), r = byHk[k.slice(0, i)], pid = +k.slice(i + 1);
+    if (!r || !cache.pmap[pid]) continue;
     const a = arr[arr.length - 2], b = arr[arr.length - 1];
     const ch = (b.price - a.price) / a.price * 100;
-    if (Math.abs(ch) >= 3) rows.push({ k, a, b, ch });
+    if (Math.abs(ch) >= 3) rows.push({ r, pid, a, b, ch });
   }
   rows.sort((x, y) => x.ch - y.ch);
   if (!rows.length) { el.innerHTML = `<p class="hint">Nessun cambio di prezzo superiore al 3%. Lo storico si riempie raccolta dopo raccolta.</p>`; return; }
   let h = `<table><thead><tr><th>Prodotto</th><th>Dove</th><th class="num">Prima</th><th class="num">Ora</th><th class="num">Var.</th></tr></thead><tbody>`;
-  for (const r of rows.slice(0, 15)) {
-    const p = cache.pmap[r.b.product_id] || {}; const s = cache.smap[r.b.site_id] || {};
-    const sel = r.b.seller_id ? (cache.sellers.find((x) => x.site_id === r.b.site_id && x.seller_id === r.b.seller_id)?.name || r.b.seller_id) : s.name;
-    h += `<tr><td>${pname(p)}</td><td>${esc(sel)}</td><td class="num">${eur(r.a.price)}</td><td class="num">${eur(r.b.price)}</td><td class="num ${r.ch < 0 ? "d-bad" : "d-ok"}">${pct(r.ch)}</td></tr>`;
-  }
+  for (const r of rows.slice(0, 15))
+    h += `<tr><td>${plink(cache.pmap[r.pid], r.pid)}</td><td><a href="#" data-open-reseller="${esc(r.r.key)}">${esc(r.r.name)}</a></td><td class="num">${eur(r.a.price)}</td><td class="num">${eur(r.b.price)}</td><td class="num ${r.ch < 0 ? "d-bad" : "d-ok"}">${pct(r.ch)}</td></tr>`;
   el.innerHTML = h + `</tbody></table>`;
 }
 
@@ -442,13 +439,13 @@ function viewMatrix() {
 }
 
 function viewAlerts() {
-  const rows = cache.latest.filter((o) => o.deviation_pct != null && o.deviation_pct <= THRESHOLD).sort((a, b) => a.deviation_pct - b.deviation_pct);
-  let h = `<h2>Tagli oltre il 20%</h2><p class="desc">Le offerte vendute a un prezzo più basso di oltre il 20% rispetto a faced.com, dalla più scontata. Per ogni offerta: sito, venditore (autorizzato o da verificare), prezzo e data di rilevazione. Oggi: ${rows.length} offerte.</p>`;
+  const rows = allOffers().filter((o) => o.deviation_pct != null && o.deviation_pct <= THRESHOLD).sort((a, b) => a.deviation_pct - b.deviation_pct);
+  let h = `<h2>Tagli oltre il 20%</h2><p class="desc">Le offerte vendute a un prezzo più basso di oltre il 20% rispetto a faced.com, dalla più scontata, presso tutti i rivenditori: siti monitorati, venditori Amazon e negozi trovati su Trovaprezzi e Idealo. Per ogni offerta: rivenditore, stato (autorizzato o da verificare), prezzo e data di rilevazione. Oggi: ${rows.length} offerte.</p>`;
   if (!rows.length) return h + `<div class="card">Nessun taglio oltre il 20% nelle ultime rilevazioni.</div>`;
-  h += `<div class="card scroll" style="padding:0"><table><thead><tr><th>Prodotto</th><th>Sito</th><th>Venditore</th>
+  h += `<div class="card scroll" style="padding:0"><table><thead><tr><th>Prodotto</th><th>Rivenditore</th><th>Stato</th>
     <th class="num">Prezzo Face D</th><th class="num">Prezzo rilevato</th><th class="num">Scostamento</th><th>Rilevato il</th></tr></thead><tbody>`;
-  for (const o of rows) h += `<tr><td>${plink(o, o.product_id)}</td><td>${esc(o.site_name)}</td><td>${esc(o.seller_name || o.seller_id || "—")} ${authTag(o.authorized)}</td>
-      <td class="num">${eur(o.rrp)}</td><td class="num"><a href="${esc(o.url)}" target="_blank" rel="noopener">${eur(o.price)}</a></td>
+  for (const o of rows) h += `<tr><td>${plink(o, o.product_id)}</td><td><a href="#" data-open-reseller="${esc(o._r.key)}">${esc(o._r.name)}</a><br><span class="muted" style="font-size:11px">${esc(o._r.kind)}</span></td><td>${authTag(o._r.authorized)}</td>
+      <td class="num">${eur(o.rrp)}</td><td class="num">${o.url ? `<a href="${esc(o.url)}" target="_blank" rel="noopener">${eur(o.price)}</a>` : eur(o.price)}</td>
       <td class="num d-bad">${pct(o.deviation_pct)}${o.possible_bundle ? '<span class="tag">bundle?</span>' : ""}</td><td>${dt(o.observed_at)}</td></tr>`;
   return h + `</tbody></table></div>`;
 }
