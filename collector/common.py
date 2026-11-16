@@ -16,12 +16,19 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
 }
 
-_session = requests.Session()
-_session.headers.update(HEADERS)
+# Alcuni siti (Atida, Sephora) bloccano i programmi riconoscendo la "firma" della connessione.
+# curl_cffi si presenta come un vero Chrome; se non è installato si usa requests.
+try:
+    from curl_cffi import requests as _cffi
+    _session = _cffi.Session(impersonate="chrome")
+    _session.headers.update({"Accept-Language": HEADERS["Accept-Language"]})
+except ImportError:  # pragma: no cover
+    _session = requests.Session()
+    _session.headers.update(HEADERS)
 _last_call: dict[str, float] = {}
 
 
-def polite_get(url: str, min_interval: float = 3.0, timeout: int = 30) -> requests.Response:
+def polite_get(url: str, min_interval: float = 3.0, timeout: int = 30):
     """GET con pausa minima tra due richieste allo stesso dominio."""
     domain = re.sub(r"^https?://([^/]+).*$", r"\1", url)
     wait = min_interval - (time.time() - _last_call.get(domain, 0))
