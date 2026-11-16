@@ -13,11 +13,17 @@ from common import polite_get, extract_offer
 BENU_BRAND = "https://www.benufarma.it/marchi/faced"
 
 
+KIT_WORDS = re.compile(r"(^|[^a-z])(kit|set|cofanetto|duo|trio|bipack|tripack|box)([^a-z]|$)", re.I)
+
+
 def discover_benu(site_id: int, log: list) -> int:
-    """Trova sulla pagina marca di BENU i prodotti senza codice Minsan (= kit creati da BENU)."""
-    found: set[str] = set()
-    for page in range(1, 10):
-        url = BENU_BRAND + (f"?page={page}" if page > 1 else "")
+    """Trova sulla pagina marca di BENU i kit creati da BENU: pagine senza codice Minsan
+    con "kit" (o simili) nel nome o nell'indirizzo."""
+    from bs4 import BeautifulSoup
+    found: dict[str, str] = {}
+    seen: set[str] = set()
+    for page in range(1, 15):
+        url = f"{BENU_BRAND}?page={page}"
         try:
             r = polite_get(url)
         except Exception as e:  # noqa: BLE001
@@ -26,15 +32,26 @@ def discover_benu(site_id: int, log: list) -> int:
         if r.status_code != 200:
             log.append(f"Bundle BENU, pagina marca {page}: HTTP {r.status_code}")
             break
-        links = set(re.findall(r'href="(?:https://www\.benufarma\.it)?(/prodotti/[^"?#]+)"', r.text))
-        if not links:
+        soup = BeautifulSoup(r.text, "html.parser")
+        links: dict[str, str] = {}
+        for a in soup.select('a[href*="/prodotti/"]'):
+            path = re.sub(r"^https://www\.benufarma\.it", "", a.get("href", "")).split("?")[0].split("#")[0]
+            text = " ".join(a.get_text(" ").split())
+            if len(text) > len(links.get(path, "")):
+                links[path] = text
+        new_links = set(links) - seen
+        if not new_links:  # pagina vuota o uguale alla precedente: fine elenco
             break
-        before = len(found)
-        found |= {"https://www.benufarma.it" + l for l in links if not re.search(r"-p-\d{9}$", l)}
-        if len(found) == before and page > 1:
-            break
+        seen |= new_links
+        for path in new_links:
+            if re.search(r"-p-\d{9}$", path):
+                continue  # ha il Minsan: è un prodotto Face D a catalogo
+            slug = path.rsplit("/", 1)[-1].replace("-", " ")
+            if KIT_WORDS.search(slug) or KIT_WORDS.search(links[path]):
+                found["https://www.benufarma.it" + path] = links[path]
     if found:
         db.insert("bundles", [{"site_id": site_id, "url": u} for u in sorted(found)], upsert_on="url")
+    log.append(f"Bundle BENU: {len(seen)} pagine lette, {len(found)} kit")
     return len(found)
 
 
